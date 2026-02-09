@@ -1,0 +1,17 @@
+[package]
+name = "longread-reviewer"
+version = "0.1.0"
+edition = "2024"
+description = "A terminal-based long-read alignment viewer with local assembly generation and per-base fitness metrics"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0.95"
+thiserror = "2.0.11"
+clap = { version = "4.5.57", features = ["derive"] }
+crossterm = "0.29.0"
+ratatui = "0.30.0"
+noodles = { version = "0.104.0", features = ["bam", "sam", "cram", "fasta", "bgzf", "core"] }
+
+[dev-dependencies]
+tempfile = "3.15.0"
