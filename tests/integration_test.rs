@@ -184,11 +184,6 @@ fn test_reads_have_valid_coordinates() {
     let (reads, _) = load_full();
     for read in &reads {
         assert!(
-            read.start >= 1 || read.start == 0,
-            "Read {} has invalid start: {}",
-            read.name, read.start
-        );
-        assert!(
             read.end >= read.start,
             "Read {} has end < start: {}-{}",
             read.name, read.start, read.end
