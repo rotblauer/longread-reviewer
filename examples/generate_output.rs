@@ -21,7 +21,7 @@ fn main() {
     let bam_path = PathBuf::from(manifest).join("tests/data/NA19240.chr17_fragment.bam");
     let ref_path = PathBuf::from(manifest).join("tests/data/chr17_fragment.fa");
 
-    // Use a 2 kb region around the complex structural event in the test data.
+    // Use a ~2 kb region around the complex structural event in the test data.
     let region = Region::new("chr17", 10990000, 10992000).unwrap();
 
     // Load data
