@@ -146,9 +146,15 @@ impl ReferenceGenome {
     ///
     /// Includes both raw FASTA entry names and base chromosome names from fragments.
     pub fn chromosomes(&self) -> Vec<&str> {
-        let mut chroms: Vec<&str> = self.sequences.keys().map(|s| s.as_str()).collect();
+        let mut seen = std::collections::HashSet::new();
+        let mut chroms: Vec<&str> = Vec::new();
+        for key in self.sequences.keys() {
+            if seen.insert(key.as_str()) {
+                chroms.push(key.as_str());
+            }
+        }
         for frag in &self.fragments {
-            if !chroms.iter().any(|c| *c == frag.chrom) {
+            if seen.insert(frag.chrom.as_str()) {
                 chroms.push(&frag.chrom);
             }
         }

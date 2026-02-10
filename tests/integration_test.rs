@@ -3,8 +3,9 @@
 //! These tests exercise the full pipeline: BAM reading → assembly → haplotype → metrics,
 //! using the real PacBio HiFi data in `tests/data/`.
 //!
-//! The test data covers chr17:10953130-11022414 (~69 kb), which contains a complex
-//! structural event several kb in size. Tests verify that the pipeline accurately
+//! The test data covers chr17:10958130-11017414 (~59 kb), which contains a complex
+//! structural event several kb in size. The reference FASTA includes a 5 kb buffer
+//! on each side (chr17:10953130-11022414). Tests verify that the pipeline accurately
 //! highlights this event and facilitates review.
 
 use std::path::PathBuf;
@@ -999,22 +1000,22 @@ fn test_region_display_roundtrip() {
 #[test]
 fn test_reads_contain_large_indels() {
     let (reads, _) = load_full();
-    let mut reads_with_large_ins = 0usize;
-    let mut reads_with_large_del = 0usize;
+    let mut large_ins_ops = 0usize;
+    let mut large_del_ops = 0usize;
 
     for read in &reads {
         for op in &read.cigar {
             match op {
-                CigarOp::Insertion(n) if *n > 100 => reads_with_large_ins += 1,
-                CigarOp::Deletion(n) if *n > 100 => reads_with_large_del += 1,
+                CigarOp::Insertion(n) if *n > 100 => large_ins_ops += 1,
+                CigarOp::Deletion(n) if *n > 100 => large_del_ops += 1,
                 _ => {}
             }
         }
     }
 
     assert!(
-        reads_with_large_ins > 0 || reads_with_large_del > 0,
-        "Expected reads with large indels (>100 bp) indicating a complex event"
+        large_ins_ops > 0 || large_del_ops > 0,
+        "Expected large indel operations (>100 bp) indicating a complex event"
     );
 }
 
