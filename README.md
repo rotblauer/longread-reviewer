@@ -56,6 +56,25 @@ longread-reviewer evaluate \
 
 Runs all built-in assembly methods and ranks them by overall fitness score.
 
+## Example Output
+
+A comprehensive set of example results is auto-generated from the bundled test
+data (PacBio HiFi reads for NA19240 chr17) on every push via
+[GitHub Actions](.github/workflows/generate-examples.yml). You can view the
+latest output in two ways:
+
+- **Plain text:** [`examples/example_output.txt`](examples/example_output.txt)
+- **HTML report:** [`docs/index.html`](docs/index.html) (also available via
+  [GitHub Pages](https://rotblauer.github.io/longread-reviewer/))
+
+To regenerate locally:
+
+```bash
+cargo run --release --example generate_output
+```
+
+This writes `examples/example_output.txt` and `docs/index.html`.
+
 ## Architecture
 
 ```
