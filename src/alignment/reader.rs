@@ -221,6 +221,11 @@ impl AlignmentReader {
             .get(&HP_TAG)
             .and_then(|v| match v {
                 Ok(Value::UInt8(n)) => Some(n),
+                Ok(Value::UInt16(n)) => u8::try_from(n).ok(),
+                Ok(Value::UInt32(n)) => u8::try_from(n).ok(),
+                Ok(Value::Int8(n)) => u8::try_from(n).ok(),
+                Ok(Value::Int16(n)) => u8::try_from(n).ok(),
+                Ok(Value::Int32(n)) => u8::try_from(n).ok(),
                 _ => None,
             });
 
