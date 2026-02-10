@@ -1,0 +1,34 @@
+=== Assembly Results ===
+Region: chr17:10990000-10990100
+Reads used: 23
+Reference length: 101
+
+--- Consensus Assembly ---
+Method: consensus
+Assembly length: 101
+Sequence: GTAAAAACATGGTAGTCATTCATCCATTTAAATCTATAATAACTTAAAATGTGCATGGTTTATGCAGCAAACCACCATGACACACATTTACCTGTGTAACA
+
+Per-base depth:
+    1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1
+
+Per-base confidence:
+  1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00 1.00
+
+--- Window Consensus (window=50, overlap=10) ---
+Assembly length: 101
+Sequence: GTAAAAACATGGTAGTCATTCATCCATTTAAATCTATAATGTCAAAACATGGTAGTCATTCATCCATTTAAATCTATAATGTCAAAACATGGTAGTCATTC
+Average depth: 1.0
+Average confidence: 0.941
+
+--- Window Consensus (window=30, overlap=5) ---
+Assembly length: 101
+Sequence: GTAAAAACATGGTAGTCATTCATCCGTTTAAACATGGTAGTCATTCATCCGTTTAAACATGGTAGTCATTCATCCGTTTAAACATGGTAGTCATTCATCCG
+Average depth: 1.0
+Average confidence: 0.950
+
+--- Window Consensus (window=80, overlap=20) ---
+Assembly length: 101
+Sequence: GTAAAAACATGGTAGTCATTCATCCATTTAAATCTATAATAACTTAAAATGTGCATGGTTGAAACAACAAACCACCAAGACATCCATTTAAATCTATAATA
+Average depth: 1.0
+Average confidence: 0.921
+

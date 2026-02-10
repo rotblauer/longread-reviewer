@@ -317,4 +317,230 @@ mod tests {
         app.handle_key(KeyCode::Left).unwrap();
         // May be back to 0 depending on step size
     }
+
+    #[test]
+    fn test_handle_key_escape_quit() {
+        let mut app = make_test_app();
+        app.handle_key(KeyCode::Esc).unwrap();
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_handle_key_assembly() {
+        let mut app = make_test_app();
+        app.handle_key(KeyCode::Char('a')).unwrap();
+        assert!(app.assembly.is_some());
+        assert!(app.fitness.is_some());
+    }
+
+    #[test]
+    fn test_handle_key_haplotype() {
+        let mut app = make_test_app();
+        app.handle_key(KeyCode::Char('h')).unwrap();
+        assert_eq!(app.haplotype_assignments.len(), 2);
+    }
+
+    #[test]
+    fn test_handle_key_next_method() {
+        let mut app = make_test_app();
+        assert_eq!(app.current_method, 0);
+        app.handle_key(KeyCode::Char('n')).unwrap();
+        assert_eq!(app.current_method, 1);
+        assert!(app.assembly.is_some());
+    }
+
+    #[test]
+    fn test_handle_key_evaluate() {
+        let mut app = make_test_app();
+        app.handle_key(KeyCode::Char('e')).unwrap();
+        // Should not panic
+    }
+
+    #[test]
+    fn test_handle_key_unknown() {
+        let mut app = make_test_app();
+        app.handle_key(KeyCode::Char('z')).unwrap();
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn test_scroll_x_bounds() {
+        let mut app = make_test_app();
+
+        // Scroll left at 0 should stay at 0
+        app.handle_key(KeyCode::Left).unwrap();
+        assert_eq!(app.scroll_x, 0);
+
+        // Scroll right many times should cap at max
+        for _ in 0..100 {
+            app.handle_key(KeyCode::Right).unwrap();
+        }
+        let max_x = app.reference.len().saturating_sub(1);
+        assert!(app.scroll_x <= max_x);
+    }
+
+    #[test]
+    fn test_scroll_y_bounds() {
+        let mut app = make_test_app();
+
+        // Scroll up at 0 should stay at 0
+        app.handle_key(KeyCode::Up).unwrap();
+        assert_eq!(app.scroll_y, 0);
+
+        // Scroll down beyond reads should cap
+        for _ in 0..100 {
+            app.handle_key(KeyCode::Down).unwrap();
+        }
+        let max_y = app.reads.len().saturating_sub(1);
+        assert!(app.scroll_y <= max_y);
+    }
+
+    #[test]
+    fn test_method_cycling() {
+        let mut app = make_test_app();
+        let num_methods = app.engine.method_names().len();
+
+        // Cycle through all methods and back to start
+        for i in 0..num_methods {
+            assert_eq!(app.current_method, i);
+            app.next_method().unwrap();
+        }
+        // Should wrap around
+        assert_eq!(app.current_method, 0);
+    }
+
+    #[test]
+    fn test_run_assembly_twice() {
+        let mut app = make_test_app();
+        app.run_assembly().unwrap();
+        let first_assembly = app.assembly.clone();
+
+        app.run_assembly().unwrap();
+        let second_assembly = app.assembly.clone();
+
+        assert!(first_assembly.is_some());
+        assert!(second_assembly.is_some());
+        // Same method on same data should produce same result
+        assert_eq!(
+            first_assembly.unwrap().sequence,
+            second_assembly.unwrap().sequence
+        );
+    }
+
+    #[test]
+    fn test_evaluate_all_scores_valid() {
+        let app = make_test_app();
+        let results = app.evaluate_all().unwrap();
+
+        assert!(!results.is_empty());
+        for (name, score) in &results {
+            assert!(!name.is_empty());
+            assert!(*score >= 0.0);
+            assert!(*score <= 1.0);
+        }
+    }
+
+    #[test]
+    fn test_app_initial_state() {
+        let app = make_test_app();
+        assert_eq!(app.scroll_x, 0);
+        assert_eq!(app.scroll_y, 0);
+        assert_eq!(app.current_method, 0);
+        assert!(app.assembly.is_none());
+        assert!(app.fitness.is_none());
+        assert!(app.haplotype_assignments.is_empty());
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn test_app_with_variant_reads() {
+        let region = Region::new("chr1", 1, 4).unwrap();
+        let reference = b"ACGT".to_vec();
+        let reads = vec![
+            AlignedRead {
+                name: "ref_read".to_string(),
+                chrom: "chr1".to_string(),
+                start: 1,
+                mapq: 60,
+                cigar: vec![CigarOp::Match(4)],
+                sequence: b"ACGT".to_vec(),
+                qualities: vec![30; 4],
+                is_reverse: false,
+                haplotype_tag: None,
+                end: 4,
+            },
+            AlignedRead {
+                name: "var_read".to_string(),
+                chrom: "chr1".to_string(),
+                start: 1,
+                mapq: 60,
+                cigar: vec![CigarOp::Match(4)],
+                sequence: b"ATGT".to_vec(), // C->T variant
+                qualities: vec![30; 4],
+                is_reverse: false,
+                haplotype_tag: None,
+                end: 4,
+            },
+        ];
+
+        let mut app = App::new(region, reference, reads);
+        app.run_assembly().unwrap();
+        app.assign_haplotypes();
+
+        assert!(app.assembly.is_some());
+        assert!(!app.haplotype_assignments.is_empty());
+
+        // After haplotype assignment, reads should be sorted
+        let hap_labels: Vec<_> = app.haplotype_assignments.iter().map(|(_, h)| *h).collect();
+        assert!(!hap_labels.is_empty());
+    }
+
+    #[test]
+    fn test_app_with_haplotagged_reads() {
+        let region = Region::new("chr1", 1, 4).unwrap();
+        let reference = b"ACGT".to_vec();
+        let reads = vec![
+            AlignedRead {
+                name: "hp1_read".to_string(),
+                chrom: "chr1".to_string(),
+                start: 1,
+                mapq: 60,
+                cigar: vec![CigarOp::Match(4)],
+                sequence: b"ACGT".to_vec(),
+                qualities: vec![30; 4],
+                is_reverse: false,
+                haplotype_tag: Some(1),
+                end: 4,
+            },
+            AlignedRead {
+                name: "hp2_read".to_string(),
+                chrom: "chr1".to_string(),
+                start: 1,
+                mapq: 60,
+                cigar: vec![CigarOp::Match(4)],
+                sequence: b"ACGT".to_vec(),
+                qualities: vec![30; 4],
+                is_reverse: false,
+                haplotype_tag: Some(2),
+                end: 4,
+            },
+        ];
+
+        let mut app = App::new(region, reference, reads);
+        app.assign_haplotypes();
+
+        let h1_count = app
+            .haplotype_assignments
+            .iter()
+            .filter(|(_, h)| *h == HaplotypeLabel::Hap1)
+            .count();
+        let h2_count = app
+            .haplotype_assignments
+            .iter()
+            .filter(|(_, h)| *h == HaplotypeLabel::Hap2)
+            .count();
+
+        assert_eq!(h1_count, 1);
+        assert_eq!(h2_count, 1);
+    }
 }

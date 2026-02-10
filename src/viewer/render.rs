@@ -32,6 +32,9 @@ pub fn haplotype_color(hap: HaplotypeLabel) -> Color {
 
 /// Render the reference track as a line of colored bases.
 pub fn render_reference_line(reference: &[u8], offset: usize, width: usize) -> Line<'static> {
+    if offset >= reference.len() {
+        return Line::from(Vec::new());
+    }
     let end = std::cmp::min(offset + width, reference.len());
     let spans: Vec<Span> = reference[offset..end]
         .iter()
@@ -407,6 +410,249 @@ mod tests {
         ];
 
         let line = render_metrics_line(&metrics, 0, 2);
+        assert_eq!(line.spans.len(), 2);
+    }
+
+    #[test]
+    fn test_base_color_lowercase() {
+        // Should handle lowercase bases too
+        assert_eq!(base_color(b'a'), Color::Green);
+        assert_eq!(base_color(b'c'), Color::Blue);
+        assert_eq!(base_color(b'g'), Color::Yellow);
+        assert_eq!(base_color(b't'), Color::Red);
+    }
+
+    #[test]
+    fn test_base_color_unknown() {
+        assert_eq!(base_color(b'X'), Color::White);
+        assert_eq!(base_color(b'-'), Color::White);
+    }
+
+    #[test]
+    fn test_haplotype_color() {
+        assert_eq!(haplotype_color(HaplotypeLabel::Hap1), Color::Cyan);
+        assert_eq!(haplotype_color(HaplotypeLabel::Hap2), Color::Magenta);
+        assert_eq!(haplotype_color(HaplotypeLabel::Unassigned), Color::DarkGray);
+    }
+
+    #[test]
+    fn test_render_reference_line_empty() {
+        let reference: &[u8] = b"";
+        let line = render_reference_line(reference, 0, 10);
+        assert_eq!(line.spans.len(), 0);
+    }
+
+    #[test]
+    fn test_render_reference_line_wider_than_ref() {
+        let reference = b"ACGT";
+        let line = render_reference_line(reference, 0, 100);
+        assert_eq!(line.spans.len(), 4);
+    }
+
+    #[test]
+    fn test_render_reference_line_offset_beyond() {
+        let reference = b"ACGT";
+        let line = render_reference_line(reference, 10, 4);
+        assert_eq!(line.spans.len(), 0);
+    }
+
+    #[test]
+    fn test_render_status_bar_minimal() {
+        let status = render_status_bar("chr1:1-100", 10, None, None);
+        // Should not panic
+        let _ = status;
+    }
+
+    #[test]
+    fn test_render_status_bar_full() {
+        let status = render_status_bar("chr1:1-100", 42, Some("consensus"), Some(0.95));
+        let _ = status;
+    }
+
+    #[test]
+    fn test_render_status_bar_low_fitness() {
+        let status = render_status_bar("chr1:1-100", 5, Some("window_consensus"), Some(0.3));
+        let _ = status;
+    }
+
+    #[test]
+    fn test_render_assembly_line() {
+        let assembly = AssemblyResult {
+            sequence: b"ACGT".to_vec(),
+            depth: vec![10, 10, 10, 10],
+            confidence: vec![1.0, 0.8, 0.4, 0.1],
+            method_name: "test".to_string(),
+        };
+        let reference = b"ACGT";
+
+        let line = render_assembly_line(&assembly, 0, 4, reference);
+        assert_eq!(line.spans.len(), 4);
+    }
+
+    #[test]
+    fn test_render_assembly_line_with_variant() {
+        let assembly = AssemblyResult {
+            sequence: b"ATGT".to_vec(), // C->T variant at position 2
+            depth: vec![10, 10, 10, 10],
+            confidence: vec![1.0, 0.8, 1.0, 1.0],
+            method_name: "test".to_string(),
+        };
+        let reference = b"ACGT";
+
+        let line = render_assembly_line(&assembly, 0, 4, reference);
+        assert_eq!(line.spans.len(), 4);
+    }
+
+    #[test]
+    fn test_render_assembly_line_offset() {
+        let assembly = AssemblyResult {
+            sequence: b"ACGTACGT".to_vec(),
+            depth: vec![10; 8],
+            confidence: vec![1.0; 8],
+            method_name: "test".to_string(),
+        };
+        let reference = b"ACGTACGT";
+
+        let line = render_assembly_line(&assembly, 4, 4, reference);
+        assert_eq!(line.spans.len(), 4);
+    }
+
+    #[test]
+    fn test_render_read_line_basic() {
+        use crate::alignment::CigarOp;
+
+        let read = AlignedRead {
+            name: "read1".to_string(),
+            chrom: "chr1".to_string(),
+            start: 1,
+            mapq: 60,
+            cigar: vec![CigarOp::Match(8)],
+            sequence: b"ACGTACGT".to_vec(),
+            qualities: vec![30; 8],
+            is_reverse: false,
+            haplotype_tag: None,
+            end: 8,
+        };
+        let reference = b"ACGTACGT";
+
+        let line = render_read_line(&read, 1, 0, 8, None, reference);
+        assert_eq!(line.spans.len(), 8);
+    }
+
+    #[test]
+    fn test_render_read_line_with_haplotype() {
+        use crate::alignment::CigarOp;
+
+        let read = AlignedRead {
+            name: "read1".to_string(),
+            chrom: "chr1".to_string(),
+            start: 1,
+            mapq: 60,
+            cigar: vec![CigarOp::Match(4)],
+            sequence: b"ACGT".to_vec(),
+            qualities: vec![30; 4],
+            is_reverse: false,
+            haplotype_tag: None,
+            end: 4,
+        };
+        let reference = b"ACGT";
+
+        let line = render_read_line(&read, 1, 0, 4, Some(HaplotypeLabel::Hap1), reference);
+        assert_eq!(line.spans.len(), 4);
+    }
+
+    #[test]
+    fn test_render_read_line_with_mismatch() {
+        use crate::alignment::CigarOp;
+
+        let read = AlignedRead {
+            name: "read1".to_string(),
+            chrom: "chr1".to_string(),
+            start: 1,
+            mapq: 60,
+            cigar: vec![CigarOp::Match(4)],
+            sequence: b"ATGT".to_vec(), // C->T mismatch at pos 2
+            qualities: vec![30; 4],
+            is_reverse: false,
+            haplotype_tag: None,
+            end: 4,
+        };
+        let reference = b"ACGT";
+
+        let line = render_read_line(&read, 1, 0, 4, None, reference);
+        assert_eq!(line.spans.len(), 4);
+    }
+
+    #[test]
+    fn test_render_read_line_partial_overlap() {
+        use crate::alignment::CigarOp;
+
+        // Read starts at 5, but viewport starts at 1
+        let read = AlignedRead {
+            name: "read1".to_string(),
+            chrom: "chr1".to_string(),
+            start: 5,
+            mapq: 60,
+            cigar: vec![CigarOp::Match(4)],
+            sequence: b"ACGT".to_vec(),
+            qualities: vec![30; 4],
+            is_reverse: false,
+            haplotype_tag: None,
+            end: 8,
+        };
+        let reference = b"ACGTACGT";
+
+        let line = render_read_line(&read, 1, 0, 8, None, reference);
+        assert_eq!(line.spans.len(), 8);
+    }
+
+    #[test]
+    fn test_render_metrics_line_various_agreements() {
+        let metrics = vec![
+            BaseMetric {
+                position: 1, ref_base: b'A', assembly_base: b'A',
+                depth: 10, agreement: 0.95, avg_quality: 30.0, is_variant: false,
+            },
+            BaseMetric {
+                position: 2, ref_base: b'C', assembly_base: b'C',
+                depth: 10, agreement: 0.75, avg_quality: 30.0, is_variant: false,
+            },
+            BaseMetric {
+                position: 3, ref_base: b'G', assembly_base: b'G',
+                depth: 10, agreement: 0.55, avg_quality: 30.0, is_variant: false,
+            },
+            BaseMetric {
+                position: 4, ref_base: b'T', assembly_base: b'T',
+                depth: 10, agreement: 0.35, avg_quality: 30.0, is_variant: false,
+            },
+            BaseMetric {
+                position: 5, ref_base: b'A', assembly_base: b'A',
+                depth: 10, agreement: 0.1, avg_quality: 30.0, is_variant: false,
+            },
+        ];
+
+        let line = render_metrics_line(&metrics, 0, 5);
+        assert_eq!(line.spans.len(), 5);
+    }
+
+    #[test]
+    fn test_render_metrics_line_with_offset() {
+        let metrics = vec![
+            BaseMetric {
+                position: 1, ref_base: b'A', assembly_base: b'A',
+                depth: 10, agreement: 1.0, avg_quality: 30.0, is_variant: false,
+            },
+            BaseMetric {
+                position: 2, ref_base: b'C', assembly_base: b'C',
+                depth: 10, agreement: 0.8, avg_quality: 30.0, is_variant: false,
+            },
+            BaseMetric {
+                position: 3, ref_base: b'G', assembly_base: b'G',
+                depth: 10, agreement: 0.6, avg_quality: 30.0, is_variant: false,
+            },
+        ];
+
+        let line = render_metrics_line(&metrics, 1, 2);
         assert_eq!(line.spans.len(), 2);
     }
 }

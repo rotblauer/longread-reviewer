@@ -1,0 +1,12 @@
+=== Assembly Method Evaluation ===
+Region: chr17:10990000-10990100
+Reads used: 23
+
+Method                     Agreement      Depth   RefIdent    Fitness
+-----------------------------------------------------------------
+consensus                      1.000        1.0      0.248      0.710
+window_consensus               0.812        1.0      0.238      0.616
+window_consensus               0.604        1.0      0.257      0.512
+window_consensus               0.485        1.0      0.198      0.453
+
+Best method: consensus (fitness: 0.710)

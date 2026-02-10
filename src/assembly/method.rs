@@ -315,4 +315,155 @@ mod tests {
         let result = method.assemble(&reads, b"").unwrap();
         assert!(result.sequence.is_empty());
     }
+
+    #[test]
+    fn test_consensus_single_read() {
+        let reference = b"ACGTACGT";
+        let reads = vec![make_read("r1", 1, b"ACGTACGT")];
+
+        let method = ConsensusAssembly;
+        let result = method.assemble(&reads, reference).unwrap();
+
+        assert_eq!(result.sequence, b"ACGTACGT");
+        assert_eq!(result.depth, vec![1, 1, 1, 1, 1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn test_consensus_high_depth() {
+        let reference = b"ACGT";
+        let reads: Vec<AlignedRead> = (0..20)
+            .map(|i| make_read(&format!("r{}", i), 1, b"ACGT"))
+            .collect();
+
+        let method = ConsensusAssembly;
+        let result = method.assemble(&reads, reference).unwrap();
+
+        assert_eq!(result.sequence, b"ACGT");
+        assert!(result.depth.iter().all(|&d| d == 20));
+        assert!(result.confidence.iter().all(|&c| c == 1.0));
+    }
+
+    #[test]
+    fn test_consensus_majority_vote_tie_breaking() {
+        let reference = b"AA";
+        // 2 reads say A, 2 reads say T at position 1 — tie; quality weighting determines result
+        let reads = vec![
+            make_read("r1", 1, b"AA"),
+            make_read("r2", 1, b"TA"),
+            make_read("r3", 1, b"AA"),
+            make_read("r4", 1, b"TA"),
+        ];
+
+        let method = ConsensusAssembly;
+        let result = method.assemble(&reads, reference).unwrap();
+
+        // Both A and T have same count; the result should be one of them
+        let base = result.sequence[0];
+        assert!(base == b'A' || base == b'T');
+        assert_eq!(result.depth[0], 4);
+    }
+
+    #[test]
+    fn test_consensus_no_coverage_fallback() {
+        // Reads don't cover the full reference
+        let reference = b"ACGTACGT";
+        let reads = vec![make_read("r1", 1, b"ACGT")]; // only covers first 4 positions
+
+        let method = ConsensusAssembly;
+        let result = method.assemble(&reads, reference).unwrap();
+
+        assert_eq!(result.sequence.len(), 8);
+        // First 4 covered, last 4 fallback to reference
+        assert_eq!(result.depth[4], 0);
+        assert_eq!(result.confidence[4], 0.0);
+    }
+
+    #[test]
+    fn test_window_consensus_empty_reads() {
+        let reference = b"ACGTACGT";
+        let reads: Vec<AlignedRead> = vec![];
+
+        let method = WindowConsensusAssembly::new(4, 1);
+        let result = method.assemble(&reads, reference).unwrap();
+
+        assert_eq!(result.sequence.len(), reference.len());
+        assert!(result.depth.iter().all(|&d| d == 0));
+    }
+
+    #[test]
+    fn test_window_consensus_empty_reference() {
+        let reads: Vec<AlignedRead> = vec![];
+
+        let method = WindowConsensusAssembly::new(4, 1);
+        let result = method.assemble(&reads, b"").unwrap();
+        assert!(result.sequence.is_empty());
+    }
+
+    #[test]
+    fn test_window_consensus_single_window() {
+        let reference = b"ACGT";
+        let reads = vec![
+            make_read("r1", 1, b"ACGT"),
+            make_read("r2", 1, b"ACGT"),
+        ];
+
+        // Window larger than reference -> single window
+        let method = WindowConsensusAssembly::new(100, 10);
+        let result = method.assemble(&reads, reference).unwrap();
+        assert_eq!(result.sequence.len(), 4);
+    }
+
+    #[test]
+    fn test_window_consensus_overlap_larger_than_window() {
+        let reference = b"ACGTACGT";
+        let reads = vec![
+            make_read("r1", 1, b"ACGTACGT"),
+            make_read("r2", 1, b"ACGTACGT"),
+        ];
+
+        // overlap > window_size: step becomes 1
+        let method = WindowConsensusAssembly::new(4, 10);
+        let result = method.assemble(&reads, reference).unwrap();
+        assert_eq!(result.sequence.len(), 8);
+    }
+
+    #[test]
+    fn test_assembly_result_method_name() {
+        let method = ConsensusAssembly;
+        assert_eq!(method.name(), "consensus");
+
+        let method = WindowConsensusAssembly::new(10, 2);
+        assert_eq!(method.name(), "window_consensus");
+    }
+
+    #[test]
+    fn test_consensus_all_same_variant() {
+        let reference = b"AAAA";
+        let reads = vec![
+            make_read("r1", 1, b"TTTT"),
+            make_read("r2", 1, b"TTTT"),
+            make_read("r3", 1, b"TTTT"),
+        ];
+
+        let method = ConsensusAssembly;
+        let result = method.assemble(&reads, reference).unwrap();
+
+        assert_eq!(result.sequence, b"TTTT");
+        assert!(result.confidence.iter().all(|&c| c == 1.0));
+    }
+
+    #[test]
+    fn test_consensus_with_different_qualities() {
+        let reference = b"ACGT";
+        let mut r1 = make_read("r1", 1, b"ACGT");
+        r1.qualities = vec![40; 4]; // high quality
+        let mut r2 = make_read("r2", 1, b"ACGT");
+        r2.qualities = vec![10; 4]; // low quality
+
+        let method = ConsensusAssembly;
+        let result = method.assemble(&[r1, r2], reference).unwrap();
+
+        assert_eq!(result.sequence, b"ACGT");
+        assert_eq!(result.depth, vec![2, 2, 2, 2]);
+    }
 }

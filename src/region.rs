@@ -101,4 +101,87 @@ mod tests {
         let r = Region::new("chr1", 100, 200).unwrap();
         assert_eq!(r.to_string(), "chr1:100-200");
     }
+
+    #[test]
+    fn test_len_single_base() {
+        let r = Region::new("chr1", 42, 42).unwrap();
+        assert_eq!(r.len(), 1);
+        assert!(!r.is_empty());
+    }
+
+    #[test]
+    fn test_len_multi() {
+        let r = Region::new("chr1", 1, 1000).unwrap();
+        assert_eq!(r.len(), 1000);
+    }
+
+    #[test]
+    fn test_large_coordinates() {
+        let r = Region::new("chr1", 100_000_000, 200_000_000).unwrap();
+        assert_eq!(r.len(), 100_000_001);
+        assert_eq!(r.to_string(), "chr1:100000000-200000000");
+    }
+
+    #[test]
+    fn test_parse_roundtrip() {
+        let original = Region::new("chrX", 12345, 67890).unwrap();
+        let parsed: Region = original.to_string().parse().unwrap();
+        assert_eq!(original, parsed);
+    }
+
+    #[test]
+    fn test_parse_chr_with_numbers() {
+        let r: Region = "chr17:10958130-11017414".parse().unwrap();
+        assert_eq!(r.chrom, "chr17");
+        assert_eq!(r.start, 10958130);
+        assert_eq!(r.end, 11017414);
+    }
+
+    #[test]
+    fn test_parse_no_chr_prefix() {
+        let r: Region = "17:100-200".parse().unwrap();
+        assert_eq!(r.chrom, "17");
+    }
+
+    #[test]
+    fn test_clone_and_eq() {
+        let r1 = Region::new("chr1", 100, 200).unwrap();
+        let r2 = r1.clone();
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn test_hash() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(Region::new("chr1", 100, 200).unwrap());
+        set.insert(Region::new("chr1", 100, 200).unwrap());
+        assert_eq!(set.len(), 1);
+
+        set.insert(Region::new("chr1", 100, 300).unwrap());
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn test_invalid_range_same_start_end_is_valid() {
+        assert!(Region::new("chr1", 100, 100).is_ok());
+    }
+
+    #[test]
+    fn test_invalid_range_error_message() {
+        let err = Region::new("chr1", 200, 100).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("200"));
+        assert!(msg.contains("100"));
+    }
+
+    #[test]
+    fn test_parse_invalid_missing_dash() {
+        assert!("chr1:100200".parse::<Region>().is_err());
+    }
+
+    #[test]
+    fn test_parse_invalid_empty() {
+        assert!("".parse::<Region>().is_err());
+    }
 }

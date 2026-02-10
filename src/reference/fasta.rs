@@ -126,4 +126,78 @@ mod tests {
         let bases = reference.fetch(&region).unwrap();
         assert_eq!(bases, b"ACGT");
     }
+
+    #[test]
+    fn test_fetch_clamps_to_length() {
+        let reference = test_reference();
+        // Region extends beyond sequence length
+        let region = Region::new("chr1", 14, 20).unwrap();
+        let bases = reference.fetch(&region).unwrap();
+        // Should return bases up to end of sequence (16 bases total, 0-indexed 13..15)
+        assert!(!bases.is_empty());
+        assert!(bases.len() <= 7); // Can't exceed 20-14+1 but capped at seq len
+    }
+
+    #[test]
+    fn test_fetch_single_base() {
+        let reference = test_reference();
+        let region = Region::new("chr1", 1, 1).unwrap();
+        let bases = reference.fetch(&region).unwrap();
+        assert_eq!(bases, b"A");
+    }
+
+    #[test]
+    fn test_fetch_entire_chromosome() {
+        let reference = test_reference();
+        let region = Region::new("chr2", 1, 16).unwrap();
+        let bases = reference.fetch(&region).unwrap();
+        assert_eq!(bases, b"TTTTAAAACCCCGGGG");
+    }
+
+    #[test]
+    fn test_from_sequences() {
+        let mut seqs = HashMap::new();
+        seqs.insert("test".to_string(), b"GATTACA".to_vec());
+        let reference = ReferenceGenome::from_sequences(seqs);
+
+        let region = Region::new("test", 1, 7).unwrap();
+        let bases = reference.fetch(&region).unwrap();
+        assert_eq!(bases, b"GATTACA");
+    }
+
+    #[test]
+    fn test_fetch_uppercase() {
+        let mut seqs = HashMap::new();
+        seqs.insert("chr1".to_string(), b"acgtacgt".to_vec()); // lowercase
+        let reference = ReferenceGenome::from_sequences(seqs);
+
+        let region = Region::new("chr1", 1, 4).unwrap();
+        let bases = reference.fetch(&region).unwrap();
+        assert_eq!(bases, b"ACGT"); // should be uppercase
+    }
+
+    #[test]
+    fn test_from_file_missing_file() {
+        let result = ReferenceGenome::from_file(std::path::Path::new("/nonexistent/file.fa"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_chromosomes_count() {
+        let reference = test_reference();
+        assert_eq!(reference.chromosomes().len(), 2);
+    }
+
+    #[test]
+    fn test_from_fasta_file_multiline() {
+        let dir = tempfile::tempdir().unwrap();
+        let fasta_path = dir.path().join("test.fa");
+        // Multi-line FASTA
+        std::fs::write(&fasta_path, b">chr1\nACGT\nACGT\n>chr2\nTTTT\n").unwrap();
+
+        let reference = ReferenceGenome::from_file(&fasta_path).unwrap();
+        let region = Region::new("chr1", 1, 8).unwrap();
+        let bases = reference.fetch(&region).unwrap();
+        assert_eq!(bases, b"ACGTACGT");
+    }
 }

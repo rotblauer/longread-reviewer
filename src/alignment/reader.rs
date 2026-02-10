@@ -341,4 +341,229 @@ mod tests {
         assert_eq!(bases[4], (106, b'A'));
         assert_eq!(bases[7], (109, b'T'));
     }
+
+    #[test]
+    fn test_cigar_op_hardclip() {
+        assert_eq!(CigarOp::HardClip(10).ref_len(), 0);
+        assert_eq!(CigarOp::HardClip(10).read_len(), 0);
+    }
+
+    #[test]
+    fn test_aligned_read_with_insertion() {
+        let read = AlignedRead {
+            name: "ins_read".to_string(),
+            chrom: "chr1".to_string(),
+            start: 100,
+            mapq: 60,
+            cigar: vec![
+                CigarOp::Match(4),
+                CigarOp::Insertion(2),
+                CigarOp::Match(4),
+            ],
+            // seq: ACGT + NN (insertion) + ACGT = 10 bases
+            sequence: b"ACGTNNACGT".to_vec(),
+            qualities: vec![30; 10],
+            is_reverse: false,
+            haplotype_tag: None,
+            end: 107,
+        };
+
+        let aligned = read.aligned_sequence();
+        // aligned_sequence includes insertion bases
+        assert_eq!(aligned, b"ACGTNNACGT");
+
+        let ref_bases = read.reference_aligned_bases();
+        // Reference-aligned bases skip the insertion
+        assert_eq!(ref_bases.len(), 8);
+        assert_eq!(ref_bases[0], (100, b'A'));
+        assert_eq!(ref_bases[3], (103, b'T'));
+        // After insertion, ref pos continues from 104
+        assert_eq!(ref_bases[4], (104, b'A'));
+        assert_eq!(ref_bases[7], (107, b'T'));
+    }
+
+    #[test]
+    fn test_aligned_read_with_deletion() {
+        let read = AlignedRead {
+            name: "del_read".to_string(),
+            chrom: "chr1".to_string(),
+            start: 100,
+            mapq: 60,
+            cigar: vec![
+                CigarOp::Match(3),
+                CigarOp::Deletion(5),
+                CigarOp::Match(3),
+            ],
+            sequence: b"ACGACG".to_vec(),
+            qualities: vec![30; 6],
+            is_reverse: false,
+            haplotype_tag: None,
+            end: 110,
+        };
+
+        let aligned = read.aligned_sequence();
+        assert_eq!(aligned, b"ACGACG");
+
+        let ref_bases = read.reference_aligned_bases();
+        assert_eq!(ref_bases.len(), 6);
+        // First 3 at 100-102
+        assert_eq!(ref_bases[0], (100, b'A'));
+        assert_eq!(ref_bases[2], (102, b'G'));
+        // Skip 5 positions (103-107), next at 108
+        assert_eq!(ref_bases[3], (108, b'A'));
+    }
+
+    #[test]
+    fn test_aligned_read_complex_cigar() {
+        // S2 M3 I1 M2 D2 M3 S2
+        let read = AlignedRead {
+            name: "complex".to_string(),
+            chrom: "chr1".to_string(),
+            start: 100,
+            mapq: 60,
+            cigar: vec![
+                CigarOp::SoftClip(2),
+                CigarOp::Match(3),
+                CigarOp::Insertion(1),
+                CigarOp::Match(2),
+                CigarOp::Deletion(2),
+                CigarOp::Match(3),
+                CigarOp::SoftClip(2),
+            ],
+            // 2 SC + 3 M + 1 I + 2 M + 3 M + 2 SC = 13
+            sequence: b"NNACGNACGTTNN".to_vec(),
+            qualities: vec![30; 13],
+            is_reverse: false,
+            haplotype_tag: None,
+            end: 111,
+        };
+
+        let aligned = read.aligned_sequence();
+        // Soft clips excluded, rest included
+        assert_eq!(aligned, b"ACGNACGTT");
+
+        let ref_bases = read.reference_aligned_bases();
+        // M3 gives 3 bases at 100-102, M2 gives 2 at 103-104, skip D2 (105-106), M3 at 107-109
+        assert_eq!(ref_bases.len(), 8);
+    }
+
+    #[test]
+    fn test_aligned_read_only_softclips() {
+        let read = AlignedRead {
+            name: "all_sc".to_string(),
+            chrom: "chr1".to_string(),
+            start: 100,
+            mapq: 0,
+            cigar: vec![CigarOp::SoftClip(10)],
+            sequence: b"AAAAAAAAAA".to_vec(),
+            qualities: vec![30; 10],
+            is_reverse: false,
+            haplotype_tag: None,
+            end: 99,
+        };
+
+        let aligned = read.aligned_sequence();
+        assert!(aligned.is_empty());
+
+        let ref_bases = read.reference_aligned_bases();
+        assert!(ref_bases.is_empty());
+    }
+
+    #[test]
+    fn test_aligned_read_empty_sequence() {
+        let read = AlignedRead {
+            name: "empty".to_string(),
+            chrom: "chr1".to_string(),
+            start: 100,
+            mapq: 0,
+            cigar: vec![],
+            sequence: vec![],
+            qualities: vec![],
+            is_reverse: false,
+            haplotype_tag: None,
+            end: 100,
+        };
+
+        assert!(read.aligned_sequence().is_empty());
+        assert!(read.reference_aligned_bases().is_empty());
+    }
+
+    #[test]
+    fn test_aligned_read_reverse_strand() {
+        let read = AlignedRead {
+            name: "rev".to_string(),
+            chrom: "chr1".to_string(),
+            start: 100,
+            mapq: 60,
+            cigar: vec![CigarOp::Match(4)],
+            sequence: b"TGCA".to_vec(),
+            qualities: vec![30; 4],
+            is_reverse: true,
+            haplotype_tag: None,
+            end: 103,
+        };
+
+        assert!(read.is_reverse);
+        assert_eq!(read.aligned_sequence(), b"TGCA");
+    }
+
+    #[test]
+    fn test_aligned_read_with_haplotype_tag() {
+        let read = AlignedRead {
+            name: "hp".to_string(),
+            chrom: "chr1".to_string(),
+            start: 100,
+            mapq: 60,
+            cigar: vec![CigarOp::Match(4)],
+            sequence: b"ACGT".to_vec(),
+            qualities: vec![30; 4],
+            is_reverse: false,
+            haplotype_tag: Some(1),
+            end: 103,
+        };
+
+        assert_eq!(read.haplotype_tag, Some(1));
+    }
+
+    #[test]
+    fn test_hardclip_does_not_affect_alignment() {
+        let read = AlignedRead {
+            name: "hc".to_string(),
+            chrom: "chr1".to_string(),
+            start: 100,
+            mapq: 60,
+            cigar: vec![
+                CigarOp::HardClip(5),
+                CigarOp::Match(4),
+                CigarOp::HardClip(5),
+            ],
+            sequence: b"ACGT".to_vec(),
+            qualities: vec![30; 4],
+            is_reverse: false,
+            haplotype_tag: None,
+            end: 103,
+        };
+
+        assert_eq!(read.aligned_sequence(), b"ACGT");
+        let ref_bases = read.reference_aligned_bases();
+        assert_eq!(ref_bases.len(), 4);
+    }
+
+    #[test]
+    fn test_cigar_ref_consumed_total() {
+        let cigar = vec![
+            CigarOp::SoftClip(5),
+            CigarOp::Match(10),
+            CigarOp::Insertion(3),
+            CigarOp::Match(5),
+            CigarOp::Deletion(2),
+            CigarOp::Match(8),
+            CigarOp::SoftClip(4),
+        ];
+        let ref_consumed: u32 = cigar.iter().map(|op| op.ref_len()).sum();
+        assert_eq!(ref_consumed, 10 + 5 + 2 + 8); // 25
+
+        let read_consumed: u32 = cigar.iter().map(|op| op.read_len()).sum();
+        assert_eq!(read_consumed, 5 + 10 + 3 + 5 + 8 + 4); // 35
+    }
 }

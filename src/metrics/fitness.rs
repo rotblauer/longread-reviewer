@@ -304,4 +304,159 @@ mod tests {
         // With 100% agreement weight, score should be high (agreement = 1.0)
         assert!(f1.overall > f2.overall);
     }
+
+    #[test]
+    fn test_default_calculator() {
+        let calc = MetricsCalculator::default();
+        assert_eq!(calc.agreement_weight, 0.5);
+        assert_eq!(calc.depth_weight, 0.3);
+        assert_eq!(calc.quality_weight, 0.2);
+    }
+
+    #[test]
+    fn test_base_metric_fields() {
+        let reference = b"ACGT";
+        let reads = vec![
+            make_read("r1", 1, b"ACGT"),
+            make_read("r2", 1, b"ACGT"),
+        ];
+        let assembly = AssemblyResult {
+            sequence: b"ACGT".to_vec(),
+            depth: vec![2, 2, 2, 2],
+            confidence: vec![1.0, 1.0, 1.0, 1.0],
+            method_name: "test".to_string(),
+        };
+
+        let calc = MetricsCalculator::new();
+        let fitness = calc.compute_fitness(&assembly, &reads, reference);
+
+        assert_eq!(fitness.base_metrics.len(), 4);
+        for (i, bm) in fitness.base_metrics.iter().enumerate() {
+            assert_eq!(bm.position, 1 + i as u64);
+            assert_eq!(bm.ref_base, reference[i]);
+            assert_eq!(bm.assembly_base, reference[i]);
+            assert_eq!(bm.depth, 2);
+            assert_eq!(bm.agreement, 1.0);
+            assert!(!bm.is_variant);
+            assert!(bm.avg_quality > 0.0);
+        }
+    }
+
+    #[test]
+    fn test_all_variants() {
+        let reference = b"AAAA";
+        let reads = vec![
+            make_read("r1", 1, b"TTTT"),
+            make_read("r2", 1, b"TTTT"),
+        ];
+        let assembly = AssemblyResult {
+            sequence: b"TTTT".to_vec(),
+            depth: vec![2, 2, 2, 2],
+            confidence: vec![1.0, 1.0, 1.0, 1.0],
+            method_name: "test".to_string(),
+        };
+
+        let calc = MetricsCalculator::new();
+        let fitness = calc.compute_fitness(&assembly, &reads, reference);
+
+        assert_eq!(fitness.reference_identity, 0.0);
+        assert!(fitness.base_metrics.iter().all(|m| m.is_variant));
+    }
+
+    #[test]
+    fn test_depth_score_saturation() {
+        // Depth saturates at 30x for scoring
+        let reference = b"A";
+        let reads: Vec<AlignedRead> = (0..60)
+            .map(|i| make_read(&format!("r{}", i), 1, b"A"))
+            .collect();
+        let assembly = AssemblyResult {
+            sequence: b"A".to_vec(),
+            depth: vec![60],
+            confidence: vec![1.0],
+            method_name: "test".to_string(),
+        };
+
+        let calc = MetricsCalculator::with_weights(0.0, 1.0, 0.0);
+        let fitness = calc.compute_fitness(&assembly, &reads, reference);
+
+        // depth_score = min(60/30, 1.0) = 1.0
+        assert!((fitness.overall - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_low_coverage() {
+        let reference = b"ACGT";
+        let reads = vec![make_read("r1", 1, b"ACGT")];
+        let assembly = AssemblyResult {
+            sequence: b"ACGT".to_vec(),
+            depth: vec![1, 1, 1, 1],
+            confidence: vec![1.0, 1.0, 1.0, 1.0],
+            method_name: "test".to_string(),
+        };
+
+        let calc = MetricsCalculator::new();
+        let fitness = calc.compute_fitness(&assembly, &reads, reference);
+
+        assert_eq!(fitness.mean_depth, 1.0);
+        assert!(fitness.overall > 0.0);
+        assert!(fitness.overall < 1.0); // Low depth should reduce overall score
+    }
+
+    #[test]
+    fn test_mixed_agreement() {
+        let reference = b"AAAA";
+        let reads = vec![
+            make_read("r1", 1, b"AAAA"),
+            make_read("r2", 1, b"TTTT"), // disagrees
+        ];
+        let assembly = AssemblyResult {
+            sequence: b"AAAA".to_vec(),
+            depth: vec![2, 2, 2, 2],
+            confidence: vec![0.5, 0.5, 0.5, 0.5],
+            method_name: "test".to_string(),
+        };
+
+        let calc = MetricsCalculator::new();
+        let fitness = calc.compute_fitness(&assembly, &reads, reference);
+
+        // Agreement should be 0.5 (1 of 2 reads agrees)
+        assert!((fitness.mean_agreement - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_zero_weight_quality() {
+        let reference = b"ACGT";
+        let reads = vec![make_read("r1", 1, b"ACGT")];
+        let assembly = AssemblyResult {
+            sequence: b"ACGT".to_vec(),
+            depth: vec![1, 1, 1, 1],
+            confidence: vec![1.0, 1.0, 1.0, 1.0],
+            method_name: "test".to_string(),
+        };
+
+        let calc = MetricsCalculator::with_weights(0.0, 0.0, 1.0);
+        let fitness = calc.compute_fitness(&assembly, &reads, reference);
+
+        // quality score = min(30/30, 1.0) = 1.0
+        assert!((fitness.overall - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_fitness_with_assembly_shorter_than_reference() {
+        let reference = b"ACGTACGT";
+        let reads = vec![make_read("r1", 1, b"ACGT")];
+        let assembly = AssemblyResult {
+            sequence: b"ACGT".to_vec(),
+            depth: vec![1, 1, 1, 1],
+            confidence: vec![1.0, 1.0, 1.0, 1.0],
+            method_name: "test".to_string(),
+        };
+
+        let calc = MetricsCalculator::new();
+        let fitness = calc.compute_fitness(&assembly, &reads, reference);
+
+        // Should still work, just with shorter metrics
+        assert_eq!(fitness.base_metrics.len(), 4);
+    }
 }

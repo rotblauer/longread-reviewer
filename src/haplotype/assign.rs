@@ -277,4 +277,128 @@ mod tests {
         let assignments = assigner.assign(&[], b"ACGT");
         assert!(assignments.is_empty());
     }
+
+    #[test]
+    fn test_assign_default() {
+        let assigner = HaplotypeAssigner::default();
+        let assignments = assigner.assign(&[], b"ACGT");
+        assert!(assignments.is_empty());
+    }
+
+    #[test]
+    fn test_assign_hp_tag_values() {
+        let reads = vec![
+            make_read("r1", 1, b"ACGT", Some(1)),
+            make_read("r2", 1, b"ACGT", Some(2)),
+            make_read("r3", 1, b"ACGT", Some(3)), // unknown HP value
+        ];
+
+        let assigner = HaplotypeAssigner::new();
+        let assignments = assigner.assign(&reads, b"ACGT");
+
+        assert_eq!(assignments[0].haplotype, HaplotypeLabel::Hap1);
+        assert_eq!(assignments[0].confidence, 1.0);
+
+        assert_eq!(assignments[1].haplotype, HaplotypeLabel::Hap2);
+        assert_eq!(assignments[1].confidence, 1.0);
+
+        // HP=3 is not recognized
+        assert_eq!(assignments[2].haplotype, HaplotypeLabel::Unassigned);
+    }
+
+    #[test]
+    fn test_assign_mixed_hp_and_no_hp() {
+        // When some reads have HP tags, tag-based assignment is used for all
+        let reads = vec![
+            make_read("r1", 1, b"ACGT", Some(1)),
+            make_read("r2", 1, b"ACGT", None),
+        ];
+
+        let assigner = HaplotypeAssigner::new();
+        let assignments = assigner.assign(&reads, b"ACGT");
+
+        assert_eq!(assignments[0].haplotype, HaplotypeLabel::Hap1);
+        assert_eq!(assignments[1].haplotype, HaplotypeLabel::Unassigned);
+        assert_eq!(assignments[1].confidence, 0.0);
+    }
+
+    #[test]
+    fn test_assign_allele_confidence() {
+        let reference = b"ACGT";
+        let reads = vec![
+            make_read("r1", 1, b"ACGT", None),
+            make_read("r2", 1, b"ATGT", None),
+        ];
+
+        let assigner = HaplotypeAssigner::new();
+        let assignments = assigner.assign(&reads, reference);
+
+        // Both should have confidence of 1.0 (100% ref or 100% alt at variant)
+        assert_eq!(assignments[0].confidence, 1.0);
+        assert_eq!(assignments[1].confidence, 1.0);
+    }
+
+    #[test]
+    fn test_assign_multiple_variant_positions() {
+        let reference = b"AAAAA";
+        // Reads with variants at multiple positions
+        let reads = vec![
+            make_read("r1", 1, b"AAAAA", None), // ref
+            make_read("r2", 1, b"ATAAA", None), // variant at pos 2
+            make_read("r3", 1, b"AAATA", None), // variant at pos 4
+            make_read("r4", 1, b"ATATA", None), // variants at pos 2 and 4
+        ];
+
+        let assigner = HaplotypeAssigner::new();
+        let assignments = assigner.assign(&reads, reference);
+
+        // r1 should be Hap1 (reference alleles)
+        assert_eq!(assignments[0].haplotype, HaplotypeLabel::Hap1);
+        // r4 should be Hap2 (all alt alleles)
+        assert_eq!(assignments[3].haplotype, HaplotypeLabel::Hap2);
+    }
+
+    #[test]
+    fn test_haplotype_label_display() {
+        assert_eq!(HaplotypeLabel::Hap1.to_string(), "H1");
+        assert_eq!(HaplotypeLabel::Hap2.to_string(), "H2");
+        assert_eq!(HaplotypeLabel::Unassigned.to_string(), "U");
+    }
+
+    #[test]
+    fn test_read_assignment_fields() {
+        let reads = vec![
+            make_read("test_read", 1, b"ACGT", Some(1)),
+        ];
+
+        let assigner = HaplotypeAssigner::new();
+        let assignments = assigner.assign(&reads, b"ACGT");
+
+        assert_eq!(assignments[0].read_name, "test_read");
+        assert_eq!(assignments[0].haplotype, HaplotypeLabel::Hap1);
+        assert_eq!(assignments[0].confidence, 1.0);
+    }
+
+    #[test]
+    fn test_assign_all_same_allele() {
+        let reference = b"AAAA";
+        // All reads have the same variant -> no variant positions detected
+        let reads = vec![
+            make_read("r1", 1, b"TTTT", None),
+            make_read("r2", 1, b"TTTT", None),
+        ];
+
+        let assigner = HaplotypeAssigner::new();
+        let assignments = assigner.assign(&reads, reference);
+
+        // No variant positions (need both ref AND alt), all unassigned
+        assert!(assignments.iter().all(|a| a.haplotype == HaplotypeLabel::Unassigned));
+    }
+
+    #[test]
+    fn test_haplotype_label_equality() {
+        assert_eq!(HaplotypeLabel::Hap1, HaplotypeLabel::Hap1);
+        assert_ne!(HaplotypeLabel::Hap1, HaplotypeLabel::Hap2);
+        assert_ne!(HaplotypeLabel::Hap1, HaplotypeLabel::Unassigned);
+    }
 }

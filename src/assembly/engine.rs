@@ -162,4 +162,97 @@ mod tests {
         let missing = engine.run_method("nonexistent", &reads, reference).unwrap();
         assert!(missing.is_none());
     }
+
+    #[test]
+    fn test_engine_default() {
+        let engine = AssemblyEngine::default();
+        assert!(engine.method_names().is_empty());
+    }
+
+    #[test]
+    fn test_engine_no_methods() {
+        let engine = AssemblyEngine::new();
+        let reference = b"ACGT";
+        let reads = vec![make_read("r1", 1, b"ACGT")];
+        let region = Region::new("chr1", 1, 4).unwrap();
+
+        let results = engine.evaluate_all(&reads, reference, &region).unwrap();
+        assert!(results.is_empty());
+
+        let result = engine.run_method("anything", &reads, reference).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_engine_results_sorted_by_fitness() {
+        let mut engine = AssemblyEngine::new();
+        engine.add_method(Box::new(ConsensusAssembly));
+        engine.add_method(Box::new(WindowConsensusAssembly::new(4, 1)));
+        engine.add_method(Box::new(WindowConsensusAssembly::new(2, 0)));
+
+        let reference = b"ACGTACGT";
+        let reads = vec![
+            make_read("r1", 1, b"ACGTACGT"),
+            make_read("r2", 1, b"ACGTACGT"),
+            make_read("r3", 1, b"ACGTACGT"),
+        ];
+
+        let region = Region::new("chr1", 1, 8).unwrap();
+        let results = engine.evaluate_all(&reads, reference, &region).unwrap();
+
+        // Results should be sorted descending by fitness
+        for i in 1..results.len() {
+            assert!(
+                results[i - 1].fitness.overall >= results[i].fitness.overall,
+                "results not properly sorted at index {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_engine_evaluate_all_with_empty_reads() {
+        let mut engine = AssemblyEngine::new();
+        engine.add_method(Box::new(ConsensusAssembly));
+
+        let reference = b"ACGT";
+        let reads: Vec<AlignedRead> = vec![];
+        let region = Region::new("chr1", 1, 4).unwrap();
+
+        let results = engine.evaluate_all(&reads, reference, &region).unwrap();
+        assert_eq!(results.len(), 1);
+        // Fitness should still be computed (might be 0 for some metrics)
+        assert!(results[0].fitness.overall >= 0.0);
+    }
+
+    #[test]
+    fn test_engine_multiple_same_method() {
+        let mut engine = AssemblyEngine::new();
+        engine.add_method(Box::new(ConsensusAssembly));
+        engine.add_method(Box::new(ConsensusAssembly));
+
+        assert_eq!(engine.method_names().len(), 2);
+    }
+
+    #[test]
+    fn test_evaluation_result_fields() {
+        let mut engine = AssemblyEngine::new();
+        engine.add_method(Box::new(ConsensusAssembly));
+
+        let reference = b"ACGT";
+        let reads = vec![
+            make_read("r1", 1, b"ACGT"),
+            make_read("r2", 1, b"ACGT"),
+        ];
+        let region = Region::new("chr1", 1, 4).unwrap();
+
+        let results = engine.evaluate_all(&reads, reference, &region).unwrap();
+        let result = &results[0];
+
+        assert_eq!(result.assembly.method_name, "consensus");
+        assert_eq!(result.assembly.sequence, b"ACGT");
+        assert!(result.fitness.mean_agreement >= 0.0);
+        assert!(result.fitness.mean_depth >= 0.0);
+        assert!(result.fitness.reference_identity >= 0.0);
+    }
 }
