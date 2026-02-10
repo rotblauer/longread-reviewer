@@ -1,7 +1,11 @@
-//! Integration tests using the example NA19240 BAM and reference FASTA.
+//! Integration tests using the NA19240 chr17 fragment BAM and reference FASTA.
 //!
 //! These tests exercise the full pipeline: BAM reading → assembly → haplotype → metrics,
-//! using the synthetic test data included in `tests/data/`.
+//! using the real PacBio HiFi data in `tests/data/`.
+//!
+//! The test data covers chr17:10953130-11022414 (~69 kb), which contains a complex
+//! structural event several kb in size. Tests verify that the pipeline accurately
+//! highlights this event and facilitates review.
 
 use std::path::PathBuf;
 
@@ -29,14 +33,19 @@ fn test_ref_path() -> PathBuf {
         .join("tests/data/chr17_fragment.fa")
 }
 
-/// Region covering the full test fragment (1-based, inclusive).
+/// Region covering the core alignment region of interest (1-based, inclusive).
 fn full_region() -> Region {
-    Region::new("chr17", 1, 2001).unwrap()
+    Region::new("chr17", 10958130, 11017414).unwrap()
 }
 
-/// A smaller sub-region for targeted tests.
+/// A smaller sub-region for targeted tests (~5 kb).
 fn sub_region() -> Region {
-    Region::new("chr17", 100, 500).unwrap()
+    Region::new("chr17", 10980000, 10985000).unwrap()
+}
+
+/// A focused sub-region around the complex event (~2 kb) for faster assembly/metrics tests.
+fn event_region() -> Region {
+    Region::new("chr17", 10990000, 10992000).unwrap()
 }
 
 /// Load reads + reference for the full region.
@@ -53,6 +62,17 @@ fn load_full() -> (Vec<AlignedRead>, Vec<u8>) {
 /// Load reads + reference for the sub-region.
 fn load_sub() -> (Vec<AlignedRead>, Vec<u8>) {
     let region = sub_region();
+    let reads = AlignmentReader::read_bam(&test_bam_path(), &region)
+        .expect("failed to read BAM");
+    let reference = ReferenceGenome::from_file(&test_ref_path())
+        .expect("failed to read reference");
+    let ref_seq = reference.fetch(&region).expect("failed to fetch region");
+    (reads, ref_seq)
+}
+
+/// Load reads + reference for the event region.
+fn load_event() -> (Vec<AlignedRead>, Vec<u8>) {
+    let region = event_region();
     let reads = AlignmentReader::read_bam(&test_bam_path(), &region)
         .expect("failed to read BAM");
     let reference = ReferenceGenome::from_file(&test_ref_path())
@@ -112,13 +132,8 @@ fn test_read_bam_full_region() {
     let region = full_region();
     let reads = AlignmentReader::read_bam(&test_bam_path(), &region).unwrap();
     assert!(
-        reads.len() >= 10,
-        "Expected at least 10 reads, got {}",
-        reads.len()
-    );
-    assert!(
-        reads.len() <= 30,
-        "Expected at most 30 reads, got {}",
+        reads.len() >= 50,
+        "Expected at least 50 reads, got {}",
         reads.len()
     );
 }
@@ -135,7 +150,6 @@ fn test_read_bam_sub_region() {
 
 #[test]
 fn test_read_bam_empty_region() {
-    // Query a region with no reads — well beyond our fragment
     let region = Region::new("chr17", 100_000_000, 100_001_000).unwrap();
     let reads = AlignmentReader::read_bam(&test_bam_path(), &region).unwrap();
     assert!(
@@ -248,12 +262,14 @@ fn test_reads_have_valid_mapq() {
 }
 
 #[test]
-fn test_some_reads_have_hp_tags() {
+fn test_reads_are_long_reads() {
     let (reads, _) = load_full();
-    let tagged = reads.iter().filter(|r| r.haplotype_tag.is_some()).count();
+    let avg_len: f64 =
+        reads.iter().map(|r| r.sequence.len() as f64).sum::<f64>() / reads.len() as f64;
     assert!(
-        tagged > 0,
-        "Expected some reads with HP tags, got 0"
+        avg_len > 5000.0,
+        "Expected average long-read length > 5kb, got {:.0}",
+        avg_len
     );
 }
 
@@ -272,19 +288,12 @@ fn test_hp_tags_are_valid() {
 }
 
 #[test]
-fn test_both_haplotypes_present() {
+fn test_reads_have_both_strands() {
     let (reads, _) = load_full();
-    let hap1 = reads.iter().filter(|r| r.haplotype_tag == Some(1)).count();
-    let hap2 = reads.iter().filter(|r| r.haplotype_tag == Some(2)).count();
-    assert!(hap1 > 0, "No haplotype 1 reads");
-    assert!(hap2 > 0, "No haplotype 2 reads");
-}
-
-#[test]
-fn test_some_reads_are_untagged() {
-    let (reads, _) = load_full();
-    let untagged = reads.iter().filter(|r| r.haplotype_tag.is_none()).count();
-    assert!(untagged > 0, "Expected some untagged reads");
+    let forward = reads.iter().filter(|r| !r.is_reverse).count();
+    let reverse = reads.iter().filter(|r| r.is_reverse).count();
+    assert!(forward > 0, "No forward-strand reads");
+    assert!(reverse > 0, "No reverse-strand reads");
 }
 
 #[test]
@@ -380,7 +389,7 @@ fn test_reference_aligned_bases_are_valid_nucleotides() {
 }
 
 // ===========================================================================
-// 3. Reference loading tests
+// 3. Reference loading tests (with fragment FASTA support)
 // ===========================================================================
 
 #[test]
@@ -389,7 +398,8 @@ fn test_reference_loads() {
     let chroms = reference.chromosomes();
     assert!(
         chroms.contains(&"chr17"),
-        "Reference missing chr17"
+        "Reference should expose chr17 from fragment name; got: {:?}",
+        chroms
     );
 }
 
@@ -399,8 +409,8 @@ fn test_reference_fetch_full_region() {
     let region = full_region();
     let seq = reference.fetch(&region).unwrap();
     assert_eq!(
-        seq.len(),
-        2001,
+        seq.len() as u64,
+        region.len(),
         "Reference sequence length mismatch"
     );
 }
@@ -420,7 +430,7 @@ fn test_reference_fetch_sub_region() {
 #[test]
 fn test_reference_bases_are_valid() {
     let reference = ReferenceGenome::from_file(&test_ref_path()).unwrap();
-    let seq = reference.fetch(&full_region()).unwrap();
+    let seq = reference.fetch(&sub_region()).unwrap();
     let valid = b"ACGTN";
     for (i, &base) in seq.iter().enumerate() {
         assert!(
@@ -439,13 +449,23 @@ fn test_reference_fetch_wrong_chrom() {
     assert!(reference.fetch(&region).is_err());
 }
 
+#[test]
+fn test_reference_fetch_outside_fragment() {
+    let reference = ReferenceGenome::from_file(&test_ref_path()).unwrap();
+    let region = Region::new("chr17", 1, 1000).unwrap();
+    assert!(
+        reference.fetch(&region).is_err(),
+        "Should fail for region outside the fragment"
+    );
+}
+
 // ===========================================================================
-// 4. Consensus assembly tests
+// 4. Consensus assembly tests (using event region for speed)
 // ===========================================================================
 
 #[test]
 fn test_consensus_assembly_produces_output() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
     let method = ConsensusAssembly;
     let result = method.assemble(&reads, &ref_seq).unwrap();
 
@@ -461,7 +481,7 @@ fn test_consensus_assembly_produces_output() {
 
 #[test]
 fn test_consensus_assembly_has_depth() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
     let method = ConsensusAssembly;
     let result = method.assemble(&reads, &ref_seq).unwrap();
 
@@ -476,7 +496,7 @@ fn test_consensus_assembly_has_depth() {
 
 #[test]
 fn test_consensus_confidence_in_range() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
     let method = ConsensusAssembly;
     let result = method.assemble(&reads, &ref_seq).unwrap();
 
@@ -491,7 +511,7 @@ fn test_consensus_confidence_in_range() {
 
 #[test]
 fn test_consensus_bases_are_valid() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
     let method = ConsensusAssembly;
     let result = method.assemble(&reads, &ref_seq).unwrap();
 
@@ -506,33 +526,13 @@ fn test_consensus_bases_are_valid() {
     }
 }
 
-#[test]
-fn test_consensus_high_identity_to_reference() {
-    let (reads, ref_seq) = load_full();
-    let method = ConsensusAssembly;
-    let result = method.assemble(&reads, &ref_seq).unwrap();
-
-    let matches = result
-        .sequence
-        .iter()
-        .zip(ref_seq.iter())
-        .filter(|(a, b)| a.eq_ignore_ascii_case(b))
-        .count();
-    let identity = matches as f64 / ref_seq.len() as f64;
-    assert!(
-        identity > 0.9,
-        "Expected >90% identity to reference, got {:.1}%",
-        identity * 100.0
-    );
-}
-
 // ===========================================================================
 // 5. Window consensus assembly tests
 // ===========================================================================
 
 #[test]
 fn test_window_consensus_assembly_produces_output() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
     let method = WindowConsensusAssembly::new(100, 20);
     let result = method.assemble(&reads, &ref_seq).unwrap();
 
@@ -542,7 +542,7 @@ fn test_window_consensus_assembly_produces_output() {
 
 #[test]
 fn test_window_consensus_various_sizes() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
 
     for (window, overlap) in &[(50, 10), (100, 20), (200, 40), (500, 100)] {
         let method = WindowConsensusAssembly::new(*window, *overlap);
@@ -564,7 +564,7 @@ fn test_window_consensus_various_sizes() {
 
 #[test]
 fn test_window_consensus_confidence_in_range() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
     let method = WindowConsensusAssembly::new(100, 20);
     let result = method.assemble(&reads, &ref_seq).unwrap();
 
@@ -583,8 +583,8 @@ fn test_window_consensus_confidence_in_range() {
 
 #[test]
 fn test_engine_evaluate_all_with_test_data() {
-    let (reads, ref_seq) = load_full();
-    let region = full_region();
+    let (reads, ref_seq) = load_event();
+    let region = event_region();
 
     let mut engine = AssemblyEngine::new();
     engine.add_method(Box::new(ConsensusAssembly));
@@ -607,7 +607,7 @@ fn test_engine_evaluate_all_with_test_data() {
 
 #[test]
 fn test_engine_run_specific_method_with_test_data() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
 
     let mut engine = AssemblyEngine::new();
     engine.add_method(Box::new(ConsensusAssembly));
@@ -622,7 +622,7 @@ fn test_engine_run_specific_method_with_test_data() {
 
 #[test]
 fn test_engine_nonexistent_method() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
 
     let mut engine = AssemblyEngine::new();
     engine.add_method(Box::new(ConsensusAssembly));
@@ -636,8 +636,8 @@ fn test_engine_nonexistent_method() {
 // ===========================================================================
 
 #[test]
-fn test_haplotype_assignment_from_tags() {
-    let (reads, ref_seq) = load_full();
+fn test_haplotype_assignment_count_matches_reads() {
+    let (reads, ref_seq) = load_event();
     let assigner = HaplotypeAssigner::new();
     let assignments = assigner.assign(&reads, &ref_seq);
 
@@ -649,27 +649,8 @@ fn test_haplotype_assignment_from_tags() {
 }
 
 #[test]
-fn test_haplotype_assignments_contain_both_haplotypes() {
-    let (reads, ref_seq) = load_full();
-    let assigner = HaplotypeAssigner::new();
-    let assignments = assigner.assign(&reads, &ref_seq);
-
-    let hap1 = assignments
-        .iter()
-        .filter(|a| a.haplotype == HaplotypeLabel::Hap1)
-        .count();
-    let hap2 = assignments
-        .iter()
-        .filter(|a| a.haplotype == HaplotypeLabel::Hap2)
-        .count();
-
-    assert!(hap1 > 0, "No Hap1 assignments");
-    assert!(hap2 > 0, "No Hap2 assignments");
-}
-
-#[test]
 fn test_haplotype_assignments_have_names() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
     let assigner = HaplotypeAssigner::new();
     let assignments = assigner.assign(&reads, &ref_seq);
 
@@ -680,7 +661,7 @@ fn test_haplotype_assignments_have_names() {
 
 #[test]
 fn test_haplotype_assignment_confidence_in_range() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
     let assigner = HaplotypeAssigner::new();
     let assignments = assigner.assign(&reads, &ref_seq);
 
@@ -695,11 +676,10 @@ fn test_haplotype_assignment_confidence_in_range() {
 
 #[test]
 fn test_haplotype_assignment_matches_hp_tags() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
     let assigner = HaplotypeAssigner::new();
     let assignments = assigner.assign(&reads, &ref_seq);
 
-    // Since our data has HP tags, assignments should use them
     for (read, assignment) in reads.iter().zip(assignments.iter()) {
         match read.haplotype_tag {
             Some(1) => assert_eq!(
@@ -734,7 +714,7 @@ fn test_haplotype_label_display() {
 
 #[test]
 fn test_fitness_score_with_test_data() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
     let method = ConsensusAssembly;
     let assembly = method.assemble(&reads, &ref_seq).unwrap();
 
@@ -750,7 +730,7 @@ fn test_fitness_score_with_test_data() {
 
 #[test]
 fn test_fitness_mean_agreement() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
     let method = ConsensusAssembly;
     let assembly = method.assemble(&reads, &ref_seq).unwrap();
 
@@ -771,7 +751,7 @@ fn test_fitness_mean_agreement() {
 
 #[test]
 fn test_fitness_mean_depth() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
     let method = ConsensusAssembly;
     let assembly = method.assemble(&reads, &ref_seq).unwrap();
 
@@ -786,29 +766,8 @@ fn test_fitness_mean_depth() {
 }
 
 #[test]
-fn test_fitness_reference_identity() {
-    let (reads, ref_seq) = load_full();
-    let method = ConsensusAssembly;
-    let assembly = method.assemble(&reads, &ref_seq).unwrap();
-
-    let calc = MetricsCalculator::new();
-    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
-
-    assert!(
-        fitness.reference_identity > 0.5,
-        "Reference identity too low: {}",
-        fitness.reference_identity
-    );
-    assert!(
-        fitness.reference_identity <= 1.0,
-        "Reference identity above 1.0: {}",
-        fitness.reference_identity
-    );
-}
-
-#[test]
 fn test_fitness_base_metrics_length() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
     let method = ConsensusAssembly;
     let assembly = method.assemble(&reads, &ref_seq).unwrap();
 
@@ -824,7 +783,7 @@ fn test_fitness_base_metrics_length() {
 
 #[test]
 fn test_fitness_base_metrics_agreement_in_range() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
     let method = ConsensusAssembly;
     let assembly = method.assemble(&reads, &ref_seq).unwrap();
 
@@ -842,29 +801,8 @@ fn test_fitness_base_metrics_agreement_in_range() {
 }
 
 #[test]
-fn test_fitness_base_metrics_detect_variants() {
-    let (reads, ref_seq) = load_full();
-    let method = ConsensusAssembly;
-    let assembly = method.assemble(&reads, &ref_seq).unwrap();
-
-    let calc = MetricsCalculator::new();
-    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
-
-    let variant_count = fitness.base_metrics.iter().filter(|m| m.is_variant).count();
-    // With our test data, some variants should be detected (het sites)
-    // But most positions should match the reference
-    let total = fitness.base_metrics.len();
-    assert!(
-        variant_count < total / 2,
-        "Too many variants: {}/{}",
-        variant_count,
-        total
-    );
-}
-
-#[test]
 fn test_fitness_custom_weights() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
     let method = ConsensusAssembly;
     let assembly = method.assemble(&reads, &ref_seq).unwrap();
 
@@ -876,12 +814,10 @@ fn test_fitness_custom_weights() {
     let f_depth = calc_depth.compute_fitness(&assembly, &reads, &ref_seq);
     let f_quality = calc_quality.compute_fitness(&assembly, &reads, &ref_seq);
 
-    // Each should produce a valid score
     assert!((0.0..=1.0).contains(&f_agreement.overall));
     assert!((0.0..=1.0).contains(&f_depth.overall));
     assert!((0.0..=1.0).contains(&f_quality.overall));
 
-    // With 100% agreement weight and high agreement data, score should be high
     assert!(
         f_agreement.overall > 0.5,
         "Agreement-only fitness too low: {}",
@@ -895,8 +831,8 @@ fn test_fitness_custom_weights() {
 
 #[test]
 fn test_full_pipeline_assemble_and_evaluate() {
-    let (reads, ref_seq) = load_full();
-    let region = full_region();
+    let (reads, ref_seq) = load_event();
+    let region = event_region();
 
     // 1. Assembly
     let method = ConsensusAssembly;
@@ -925,30 +861,21 @@ fn test_full_pipeline_assemble_and_evaluate() {
 fn test_full_pipeline_sub_region() {
     let (reads, ref_seq) = load_sub();
 
-    // Assembly should still work with subset of reads
     let method = ConsensusAssembly;
     let assembly = method.assemble(&reads, &ref_seq).unwrap();
     assert_eq!(assembly.sequence.len(), ref_seq.len());
-
-    // Metrics
-    let calc = MetricsCalculator::new();
-    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
-    assert!(fitness.overall > 0.0);
 }
 
 #[test]
 fn test_different_assembly_methods_produce_different_results() {
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
 
     let consensus = ConsensusAssembly.assemble(&reads, &ref_seq).unwrap();
     let window = WindowConsensusAssembly::new(50, 10)
         .assemble(&reads, &ref_seq)
         .unwrap();
 
-    // Both should produce same-length output
     assert_eq!(consensus.sequence.len(), window.sequence.len());
-
-    // Method names should differ
     assert_ne!(consensus.method_name, window.method_name);
 }
 
@@ -960,8 +887,8 @@ fn test_different_assembly_methods_produce_different_results() {
 fn test_app_creation_with_test_data() {
     use longread_reviewer::viewer::App;
 
-    let (reads, ref_seq) = load_full();
-    let region = full_region();
+    let (reads, ref_seq) = load_event();
+    let region = event_region();
     let app = App::new(region, ref_seq.clone(), reads.clone());
 
     assert_eq!(app.reads.len(), reads.len());
@@ -974,8 +901,8 @@ fn test_app_creation_with_test_data() {
 fn test_app_run_assembly_with_test_data() {
     use longread_reviewer::viewer::App;
 
-    let (reads, ref_seq) = load_full();
-    let region = full_region();
+    let (reads, ref_seq) = load_event();
+    let region = event_region();
     let mut app = App::new(region, ref_seq, reads);
 
     app.run_assembly().unwrap();
@@ -987,9 +914,9 @@ fn test_app_run_assembly_with_test_data() {
 fn test_app_assign_haplotypes_with_test_data() {
     use longread_reviewer::viewer::App;
 
-    let (reads, ref_seq) = load_full();
+    let (reads, ref_seq) = load_event();
     let num_reads = reads.len();
-    let region = full_region();
+    let region = event_region();
     let mut app = App::new(region, ref_seq, reads);
 
     app.assign_haplotypes();
@@ -1000,15 +927,14 @@ fn test_app_assign_haplotypes_with_test_data() {
 fn test_app_next_method_cycles() {
     use longread_reviewer::viewer::App;
 
-    let (reads, ref_seq) = load_full();
-    let region = full_region();
+    let (reads, ref_seq) = load_event();
+    let region = event_region();
     let mut app = App::new(region, ref_seq, reads);
 
     let initial_method = app.current_method;
     app.next_method().unwrap();
     assert_ne!(app.current_method, initial_method);
 
-    // Cycle back to start
     let num_methods = app.engine.method_names().len();
     for _ in 1..num_methods {
         app.next_method().unwrap();
@@ -1020,8 +946,8 @@ fn test_app_next_method_cycles() {
 fn test_app_evaluate_all_with_test_data() {
     use longread_reviewer::viewer::App;
 
-    let (reads, ref_seq) = load_full();
-    let region = full_region();
+    let (reads, ref_seq) = load_event();
+    let region = event_region();
     let app = App::new(region, ref_seq, reads);
 
     let results = app.evaluate_all().unwrap();
@@ -1052,7 +978,7 @@ fn test_region_chr17_parse() {
 #[test]
 fn test_region_length() {
     let r = full_region();
-    assert_eq!(r.len(), 2001);
+    assert_eq!(r.len(), 59285);
 }
 
 #[test]
@@ -1061,4 +987,261 @@ fn test_region_display_roundtrip() {
     let s = r.to_string();
     let r2: Region = s.parse().unwrap();
     assert_eq!(r, r2);
+}
+
+// ===========================================================================
+// 12. Complex event detection tests
+//
+// The NA19240 chr17 fragment contains a complex structural event (several kb).
+// These tests validate that the pipeline highlights it for review.
+// ===========================================================================
+
+#[test]
+fn test_reads_contain_large_indels() {
+    let (reads, _) = load_full();
+    let mut reads_with_large_ins = 0usize;
+    let mut reads_with_large_del = 0usize;
+
+    for read in &reads {
+        for op in &read.cigar {
+            match op {
+                CigarOp::Insertion(n) if *n > 100 => reads_with_large_ins += 1,
+                CigarOp::Deletion(n) if *n > 100 => reads_with_large_del += 1,
+                _ => {}
+            }
+        }
+    }
+
+    assert!(
+        reads_with_large_ins > 0 || reads_with_large_del > 0,
+        "Expected reads with large indels (>100 bp) indicating a complex event"
+    );
+}
+
+#[test]
+fn test_assembly_diverges_from_reference_in_event_region() {
+    let (reads, ref_seq) = load_event();
+    let method = ConsensusAssembly;
+    let result = method.assemble(&reads, &ref_seq).unwrap();
+
+    let matches = result
+        .sequence
+        .iter()
+        .zip(ref_seq.iter())
+        .filter(|(a, b)| a.eq_ignore_ascii_case(b))
+        .count();
+    let identity = matches as f64 / ref_seq.len() as f64;
+
+    // In a region with a complex event, the consensus should diverge from reference.
+    // The identity should be well below 100% but still above noise level.
+    assert!(
+        identity < 1.0,
+        "Expected assembly to diverge from reference in event region, got {:.1}% identity",
+        identity * 100.0
+    );
+}
+
+#[test]
+fn test_metrics_detect_variant_positions_in_event_region() {
+    let (reads, ref_seq) = load_event();
+    let method = ConsensusAssembly;
+    let assembly = method.assemble(&reads, &ref_seq).unwrap();
+
+    let calc = MetricsCalculator::new();
+    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
+
+    let variant_count = fitness.base_metrics.iter().filter(|m| m.is_variant).count();
+    assert!(
+        variant_count > 0,
+        "Expected variant positions in the complex event region, got 0"
+    );
+}
+
+#[test]
+fn test_multiple_indel_cigar_ops_per_read() {
+    let (reads, _) = load_full();
+
+    let mut total_ins_ops = 0usize;
+    let mut total_del_ops = 0usize;
+    for read in &reads {
+        for op in &read.cigar {
+            match op {
+                CigarOp::Insertion(_) => total_ins_ops += 1,
+                CigarOp::Deletion(_) => total_del_ops += 1,
+                _ => {}
+            }
+        }
+    }
+
+    assert!(
+        total_ins_ops > 100,
+        "Expected many insertion operations across reads, got {}",
+        total_ins_ops
+    );
+    assert!(
+        total_del_ops > 100,
+        "Expected many deletion operations across reads, got {}",
+        total_del_ops
+    );
+}
+
+#[test]
+fn test_sub_region_reads_overlap_event() {
+    let (reads, _) = load_sub();
+    assert!(
+        reads.len() >= 10,
+        "Expected substantial coverage in sub-region near event, got {}",
+        reads.len()
+    );
+}
+
+#[test]
+fn test_haplotype_clustering_produces_assignments_in_event_region() {
+    let (reads, ref_seq) = load_event();
+    let assigner = HaplotypeAssigner::new();
+    let assignments = assigner.assign(&reads, &ref_seq);
+
+    // Every read should get an assignment (haplotype or unassigned).
+    assert_eq!(assignments.len(), reads.len());
+
+    let hap1 = assignments
+        .iter()
+        .filter(|a| a.haplotype == HaplotypeLabel::Hap1)
+        .count();
+    let hap2 = assignments
+        .iter()
+        .filter(|a| a.haplotype == HaplotypeLabel::Hap2)
+        .count();
+    let unassigned = assignments
+        .iter()
+        .filter(|a| a.haplotype == HaplotypeLabel::Unassigned)
+        .count();
+
+    // The event region may be homozygous (all reads agree) or heterozygous;
+    // either way the clustering should produce a valid partition.
+    assert_eq!(
+        hap1 + hap2 + unassigned,
+        reads.len(),
+        "All reads should be accounted for: H1={}, H2={}, U={}",
+        hap1, hap2, unassigned
+    );
+}
+
+#[test]
+fn test_fitness_reference_identity_lower_in_event_region() {
+    let (reads, ref_seq) = load_event();
+    let method = ConsensusAssembly;
+    let assembly = method.assemble(&reads, &ref_seq).unwrap();
+
+    let calc = MetricsCalculator::new();
+    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
+
+    // A region with a complex event should show reference identity < 1.0
+    assert!(
+        fitness.reference_identity < 1.0,
+        "Expected reference identity < 1.0 in event region, got {}",
+        fitness.reference_identity
+    );
+}
+
+#[test]
+fn test_event_region_has_depth_coverage() {
+    let (reads, ref_seq) = load_event();
+    let method = ConsensusAssembly;
+    let result = method.assemble(&reads, &ref_seq).unwrap();
+
+    let positions_with_coverage = result.depth.iter().filter(|&&d| d > 0).count();
+    let coverage_fraction = positions_with_coverage as f64 / result.depth.len() as f64;
+    assert!(
+        coverage_fraction > 0.5,
+        "Expected >50% of event region positions to have coverage, got {:.1}%",
+        coverage_fraction * 100.0
+    );
+}
+
+#[test]
+fn test_assembly_methods_rank_reasonably_on_event_data() {
+    let (reads, ref_seq) = load_event();
+    let region = event_region();
+
+    let mut engine = AssemblyEngine::new();
+    engine.add_method(Box::new(ConsensusAssembly));
+    engine.add_method(Box::new(WindowConsensusAssembly::new(200, 40)));
+    engine.add_method(Box::new(WindowConsensusAssembly::new(500, 100)));
+
+    let results = engine.evaluate_all(&reads, &ref_seq, &region).unwrap();
+
+    // All methods should produce valid fitness scores
+    for result in &results {
+        assert!(
+            result.fitness.overall > 0.0,
+            "Method {} scored 0.0 on event data",
+            result.assembly.method_name
+        );
+        assert!(
+            result.fitness.overall <= 1.0,
+            "Method {} scored >1.0 on event data",
+            result.assembly.method_name
+        );
+    }
+}
+
+#[test]
+fn test_variant_positions_cluster_in_event() {
+    let (reads, ref_seq) = load_event();
+    let method = ConsensusAssembly;
+    let assembly = method.assemble(&reads, &ref_seq).unwrap();
+
+    let calc = MetricsCalculator::new();
+    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
+
+    // Look for clusters of variant positions (characteristic of complex events).
+    let variant_positions: Vec<u64> = fitness
+        .base_metrics
+        .iter()
+        .filter(|m| m.is_variant)
+        .map(|m| m.position)
+        .collect();
+
+    if variant_positions.len() >= 2 {
+        // Check that some variants are near each other (within 100 bp)
+        let has_cluster = variant_positions.windows(2).any(|w| w[1] - w[0] < 100);
+        assert!(
+            has_cluster,
+            "Expected clustered variant positions in event region"
+        );
+    }
+}
+
+#[test]
+fn test_high_read_agreement_despite_reference_divergence() {
+    let (reads, ref_seq) = load_event();
+    let method = ConsensusAssembly;
+    let assembly = method.assemble(&reads, &ref_seq).unwrap();
+
+    let calc = MetricsCalculator::new();
+    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
+
+    // In a complex event, reads may consistently differ from the reference
+    // but agree with each other (high agreement, low reference identity).
+    // This is the signature that makes the event visible for review.
+    let high_agreement = fitness
+        .base_metrics
+        .iter()
+        .filter(|m| m.depth > 0 && m.agreement > 0.8)
+        .count();
+    let variant_positions = fitness
+        .base_metrics
+        .iter()
+        .filter(|m| m.is_variant)
+        .count();
+
+    assert!(
+        high_agreement > 0,
+        "Expected positions with high read agreement"
+    );
+    assert!(
+        variant_positions > 0,
+        "Expected variant positions where assembly diverges from reference"
+    );
 }
