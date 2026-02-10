@@ -196,6 +196,7 @@ fn generate_assembly_output() {
     writeln!(f, "Region: {}", region).unwrap();
     writeln!(f, "Reads used: {}", reads.len()).unwrap();
     writeln!(f, "Reference length: {}", reference.len()).unwrap();
+    writeln!(f, "Note: Reference is synthetic (majority-vote from reads), not a true genome reference.").unwrap();
     writeln!(f).unwrap();
 
     // Run consensus assembly
@@ -276,6 +277,7 @@ fn generate_evaluation_output() {
     writeln!(f, "=== Assembly Method Evaluation ===").unwrap();
     writeln!(f, "Region: {}", region).unwrap();
     writeln!(f, "Reads used: {}", reads.len()).unwrap();
+    writeln!(f, "Note: Reference is synthetic (majority-vote from reads), not a true genome reference.").unwrap();
     writeln!(f).unwrap();
 
     let mut engine = AssemblyEngine::new();
@@ -338,6 +340,8 @@ fn generate_fitness_output() {
     writeln!(f, "=== Per-Base Fitness Metrics ===").unwrap();
     writeln!(f, "Region: {}", region).unwrap();
     writeln!(f, "Method: consensus").unwrap();
+    writeln!(f, "Note: Reference is synthetic (majority-vote from reads), not a true genome reference.").unwrap();
+    writeln!(f, "      Variant counts reflect differences from the synthetic reference.").unwrap();
     writeln!(f).unwrap();
 
     writeln!(f, "--- Summary ---").unwrap();

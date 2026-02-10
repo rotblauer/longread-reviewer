@@ -1,6 +1,8 @@
 === Per-Base Fitness Metrics ===
 Region: chr17:10990000-10990100
 Method: consensus
+Note: Reference is synthetic (majority-vote from reads), not a true genome reference.
+      Variant counts reflect differences from the synthetic reference.
 
 --- Summary ---
 Mean agreement:    1.000

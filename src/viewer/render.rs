@@ -33,6 +33,7 @@ pub fn haplotype_color(hap: HaplotypeLabel) -> Color {
 /// Render the reference track as a line of colored bases.
 pub fn render_reference_line(reference: &[u8], offset: usize, width: usize) -> Line<'static> {
     if offset >= reference.len() {
+        // Offset is past the end of the reference; nothing to render.
         return Line::from(Vec::new());
     }
     let end = std::cmp::min(offset + width, reference.len());

@@ -2,6 +2,7 @@
 Region: chr17:10990000-10990100
 Reads used: 23
 Reference length: 101
+Note: Reference is synthetic (majority-vote from reads), not a true genome reference.
 
 --- Consensus Assembly ---
 Method: consensus
@@ -28,7 +29,7 @@ Average confidence: 0.950
 
 --- Window Consensus (window=80, overlap=20) ---
 Assembly length: 101
-Sequence: GTAAAAACATGGTAGTCATTCATCCATTTAAATCTATAATAACTTAAAATGTGCATGGTTGAAACAACAAACCACCAAGACATCCATTTAAATCTATAATA
+Sequence: GTAAAAACATGGTAGTCATTCATCCATTTAAATCTATAATAACTTAAAATGTGCATGGTTGAAACAACAAGCCACCCAGACATCCATTTAAATCTATAATA
 Average depth: 1.0
 Average confidence: 0.921
 
