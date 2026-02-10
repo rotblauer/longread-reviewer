@@ -1043,10 +1043,10 @@ fn test_app_evaluate_all_with_test_data() {
 
 #[test]
 fn test_region_chr17_parse() {
-    let r: Region = "chr17:10958130-10971414".parse().unwrap();
+    let r: Region = "chr17:10958130-11017414".parse().unwrap();
     assert_eq!(r.chrom, "chr17");
     assert_eq!(r.start, 10958130);
-    assert_eq!(r.end, 10971414);
+    assert_eq!(r.end, 11017414);
 }
 
 #[test]
