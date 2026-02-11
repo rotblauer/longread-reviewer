@@ -10,7 +10,7 @@ use ratatui::Terminal;
 
 use crate::alignment::AlignedRead;
 use crate::assembly::engine::AssemblyEngine;
-use crate::assembly::method::{AssemblyResult, ConsensusAssembly, WindowConsensusAssembly};
+use crate::assembly::method::{AssemblyResult, ConsensusAssembly, HaplotypeAssemblyResult, WindowConsensusAssembly};
 use crate::haplotype::{HaplotypeAssigner, HaplotypeLabel};
 use crate::metrics::{FitnessScore, MetricsCalculator};
 use crate::region::Region;
@@ -30,6 +30,8 @@ pub struct App {
     pub fitness: Option<FitnessScore>,
     /// Haplotype assignments for reads.
     pub haplotype_assignments: Vec<(String, HaplotypeLabel)>,
+    /// Per-haplotype assembly result with divergence and SV likelihood.
+    pub haplotype_assembly: Option<HaplotypeAssemblyResult>,
     /// Horizontal scroll offset.
     pub scroll_x: usize,
     /// Vertical scroll offset for reads.
@@ -57,6 +59,7 @@ impl App {
             assembly: None,
             fitness: None,
             haplotype_assignments: Vec::new(),
+            haplotype_assembly: None,
             scroll_x: 0,
             scroll_y: 0,
             engine,
@@ -108,6 +111,18 @@ impl App {
         });
     }
 
+    /// Run per-haplotype assembly, splitting reads by haplotype and assembling
+    /// each group independently. Produces divergence and SV likelihood tracks.
+    pub fn run_haplotype_assembly(&mut self) -> Result<()> {
+        let result = self.engine.assemble_by_haplotype(
+            &self.reads,
+            &self.reference,
+            self.region.start,
+        )?;
+        self.haplotype_assembly = Some(result);
+        Ok(())
+    }
+
     /// Cycle to the next assembly method and re-run.
     pub fn next_method(&mut self) -> Result<()> {
         let num_methods = self.engine.method_names().len();
@@ -152,6 +167,9 @@ impl App {
             }
             KeyCode::Char('h') => {
                 self.assign_haplotypes();
+            }
+            KeyCode::Char('H') => {
+                self.run_haplotype_assembly()?;
             }
             KeyCode::Char('n') => {
                 self.next_method()?;

@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::alignment::AlignedRead;
-use crate::assembly::method::{AssemblyMethod, AssemblyResult};
+use crate::assembly::method::{AssemblyMethod, AssemblyResult, HaplotypeAssemblyResult, HaplotypeAwareAssembly};
 use crate::metrics::fitness::{FitnessScore, MetricsCalculator};
 use crate::region::Region;
 
@@ -83,6 +83,19 @@ impl AssemblyEngine {
     /// List available method names.
     pub fn method_names(&self) -> Vec<&str> {
         self.methods.iter().map(|m| m.name()).collect()
+    }
+
+    /// Run per-haplotype assembly: split reads by haplotype and assemble each
+    /// group independently. Returns paired assemblies with divergence and SV
+    /// likelihood tracks for visual comparison.
+    pub fn assemble_by_haplotype(
+        &self,
+        reads: &[AlignedRead],
+        reference: &[u8],
+        ref_start_pos: u64,
+    ) -> Result<HaplotypeAssemblyResult> {
+        let method = HaplotypeAwareAssembly::new();
+        method.assemble_by_haplotype(reads, reference, ref_start_pos)
     }
 }
 

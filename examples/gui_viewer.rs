@@ -19,7 +19,7 @@ use egui_plot::{Bar, BarChart, Legend, Plot};
 
 use longread_reviewer::alignment::{AlignedRead, AlignmentReader, CigarOp};
 use longread_reviewer::assembly::engine::AssemblyEngine;
-use longread_reviewer::assembly::method::{AssemblyResult, ConsensusAssembly, WindowConsensusAssembly};
+use longread_reviewer::assembly::method::{AssemblyResult, ConsensusAssembly, HaplotypeAssemblyResult, WindowConsensusAssembly};
 use longread_reviewer::haplotype::{HaplotypeAssigner, HaplotypeLabel};
 use longread_reviewer::metrics::{FitnessScore, MetricsCalculator};
 use longread_reviewer::reference::ReferenceGenome;
@@ -132,6 +132,7 @@ struct SVReviewerApp {
     engine: AssemblyEngine,
     assemblies: Vec<AssemblyInfo>,
     selected_assembly: usize,
+    haplotype_assembly: Option<HaplotypeAssemblyResult>,
 
     // View state
     zoom: ZoomLevel,
@@ -153,6 +154,7 @@ struct SVReviewerApp {
     color_by_haplotype: bool,
     show_depth_track: bool,
     show_confidence_track: bool,
+    show_haplotype_assemblies: bool,
 
     // Computed values (cached)
     depth_by_position: Vec<u32>,
@@ -178,6 +180,7 @@ impl SVReviewerApp {
             engine,
             assemblies: Vec::new(),
             selected_assembly: 0,
+            haplotype_assembly: None,
             zoom: ZoomLevel::Medium,
             custom_zoom: 2.0,
             view_center,
@@ -193,6 +196,7 @@ impl SVReviewerApp {
             color_by_haplotype: true,
             show_depth_track: true,
             show_confidence_track: true,
+            show_haplotype_assemblies: true,
             depth_by_position: Vec::new(),
             max_depth: 1,
         };
@@ -200,6 +204,7 @@ impl SVReviewerApp {
         app.detect_svs();
         app.assign_haplotypes();
         app.run_all_assemblies(&reference, region.start);
+        app.run_haplotype_assembly(&reference, region.start);
         app.compute_depth_track();
 
         // Jump to first SV if any
@@ -313,6 +318,18 @@ impl SVReviewerApp {
                     result,
                     fitness,
                 });
+            }
+        }
+    }
+
+    fn run_haplotype_assembly(&mut self, reference: &[u8], ref_start: u64) {
+        match self.engine.assemble_by_haplotype(&self.reads, reference, ref_start) {
+            Ok(result) => {
+                self.haplotype_assembly = Some(result);
+            }
+            Err(e) => {
+                eprintln!("Warning: haplotype assembly failed: {}", e);
+                self.haplotype_assembly = None;
             }
         }
     }
@@ -465,6 +482,13 @@ impl eframe::App for SVReviewerApp {
                 ui.checkbox(&mut self.color_by_haplotype, "Haplotypes");
                 ui.checkbox(&mut self.show_depth_track, "Depth");
                 ui.checkbox(&mut self.show_confidence_track, "Confidence");
+                ui.separator();
+                let hap_label = if let Some(ref ha) = self.haplotype_assembly {
+                    format!("Per-Haplotype Assembly (H1:{} H2:{})", ha.hap1_read_count, ha.hap2_read_count)
+                } else {
+                    "Per-Haplotype Assembly".to_string()
+                };
+                ui.checkbox(&mut self.show_haplotype_assemblies, hap_label);
             });
         });
 
@@ -684,6 +708,45 @@ impl SVReviewerApp {
                 });
         }
 
+        // Haplotype assembly summary
+        if let Some(ref hap_asm) = self.haplotype_assembly {
+            ui.separator();
+            ui.heading("Haplotype Assembly");
+
+            egui::Frame::new()
+                .fill(Color32::from_rgb(35, 35, 45))
+                .inner_margin(8.0)
+                .corner_radius(4.0)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(COLOR_HAP1, RichText::new(format!("H1: {} reads", hap_asm.hap1_read_count)).strong());
+                        ui.colored_label(COLOR_HAP2, RichText::new(format!("H2: {} reads", hap_asm.hap2_read_count)).strong());
+                    });
+
+                    let total_divergent: usize = hap_asm.divergence.iter().filter(|&&d| d > 0.0).count();
+                    let total_bases = hap_asm.divergence.len();
+                    let pct_divergent = if total_bases > 0 {
+                        total_divergent as f64 / total_bases as f64 * 100.0
+                    } else {
+                        0.0
+                    };
+                    ui.label(format!("Divergent positions: {} ({:.2}%)", total_divergent, pct_divergent));
+
+                    let high_sv: usize = hap_asm.sv_likelihood.iter().filter(|&&s| s > 0.5).count();
+                    let sv_color = if high_sv > 100 {
+                        Color32::from_rgb(255, 60, 60)
+                    } else if high_sv > 0 {
+                        Color32::from_rgb(255, 180, 60)
+                    } else {
+                        Color32::from_rgb(100, 200, 100)
+                    };
+                    ui.colored_label(
+                        sv_color,
+                        format!("High-confidence SV bases: {}", high_sv),
+                    );
+                });
+        }
+
         // Selected SV details
         if let Some(idx) = self.selected_sv {
             if let Some(sv) = self.sv_events.get(idx) {
@@ -804,6 +867,32 @@ impl SVReviewerApp {
         if self.show_confidence_track {
             if let Some(asm) = self.assemblies.get(self.selected_assembly) {
                 self.render_confidence_track(painter, available_rect, y, vis_start, vis_end, asm);
+                y += track_height + 5.0;
+            }
+        }
+
+        // 7. Per-haplotype assembly tracks
+        if self.show_haplotype_assemblies {
+            if let Some(ref hap_asm) = self.haplotype_assembly {
+                // Hap1 assembly track
+                self.render_haplotype_assembly_track(
+                    painter, available_rect, y, vis_start, vis_end,
+                    &hap_asm.hap1_assembly, "H1", COLOR_HAP1, hap_asm.hap1_read_count,
+                );
+                y += track_height + 2.0;
+
+                // Hap2 assembly track
+                self.render_haplotype_assembly_track(
+                    painter, available_rect, y, vis_start, vis_end,
+                    &hap_asm.hap2_assembly, "H2", COLOR_HAP2, hap_asm.hap2_read_count,
+                );
+                y += track_height + 2.0;
+
+                // Divergence / SV likelihood track
+                self.render_divergence_track(
+                    painter, available_rect, y, vis_start, vis_end,
+                    &hap_asm.divergence, &hap_asm.sv_likelihood,
+                );
                 y += track_height + 5.0;
             }
         }
@@ -1323,6 +1412,187 @@ impl SVReviewerApp {
                     read_pos += *n as usize;
                 }
                 CigarOp::HardClip(_) => {}
+            }
+        }
+    }
+
+    fn render_haplotype_assembly_track(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        y: f32,
+        vis_start: u64,
+        vis_end: u64,
+        assembly: &AssemblyResult,
+        label: &str,
+        color: Color32,
+        read_count: usize,
+    ) {
+        let height = 20.0;
+        let view_rect = Rect::from_min_max(
+            Pos2::new(rect.left(), y),
+            Pos2::new(rect.right(), y + height),
+        );
+
+        // Background with haplotype-tinted color
+        painter.rect_filled(
+            view_rect,
+            0.0,
+            Color32::from_rgb(
+                (color.r() as u16 * 30 / 255) as u8,
+                (color.g() as u16 * 30 / 255) as u8,
+                (color.b() as u16 * 30 / 255) as u8 + 20,
+            ),
+        );
+
+        // Label
+        painter.text(
+            Pos2::new(rect.left() + 5.0, y + 2.0),
+            egui::Align2::LEFT_TOP,
+            format!("{} ({})", label, read_count),
+            FontId::proportional(10.0),
+            color,
+        );
+
+        let bases_per_pixel = self.bases_per_pixel();
+        if bases_per_pixel < 0.5 {
+            // Show individual bases with mismatch highlighting
+            for pos in vis_start..=vis_end {
+                let idx = (pos - self.region.start) as usize;
+                if idx < assembly.sequence.len() && idx < self.reference.len() {
+                    let asm_base = assembly.sequence[idx];
+                    let ref_base = self.reference[idx];
+                    let is_variant = !asm_base.eq_ignore_ascii_case(&ref_base);
+
+                    let x = self.pos_to_x(pos, view_rect);
+
+                    if is_variant && self.highlight_mismatches {
+                        let bg_rect = Rect::from_center_size(
+                            Pos2::new(x, y + height / 2.0),
+                            Vec2::new(10.0, height - 4.0),
+                        );
+                        painter.rect_filled(bg_rect, 2.0, color.gamma_multiply(0.6));
+                    }
+
+                    let text_color = if is_variant { Color32::WHITE } else { base_color(asm_base) };
+                    painter.text(
+                        Pos2::new(x, y + height / 2.0),
+                        egui::Align2::CENTER_CENTER,
+                        (asm_base as char).to_string(),
+                        FontId::monospace(12.0),
+                        text_color,
+                    );
+                }
+            }
+        } else {
+            // Show colored blocks indicating depth/confidence
+            let num_bins = (rect.width() / 3.0).max(1.0) as usize;
+            let bin_width = rect.width() / num_bins as f32;
+
+            for i in 0..num_bins {
+                let bin_start = vis_start + (i as u64 * (vis_end - vis_start) / num_bins as u64);
+                let bin_end = vis_start + ((i + 1) as u64 * (vis_end - vis_start) / num_bins as u64);
+
+                let start_idx = bin_start.saturating_sub(self.region.start) as usize;
+                let end_idx = (bin_end.saturating_sub(self.region.start) as usize).min(assembly.confidence.len());
+
+                if start_idx < assembly.confidence.len() && start_idx < end_idx {
+                    let avg_conf: f64 = assembly.confidence[start_idx..end_idx]
+                        .iter()
+                        .sum::<f64>()
+                        / (end_idx - start_idx).max(1) as f64;
+
+                    // Check for variants in this bin
+                    let has_variant = (start_idx..end_idx).any(|idx| {
+                        idx < assembly.sequence.len()
+                            && idx < self.reference.len()
+                            && !assembly.sequence[idx].eq_ignore_ascii_case(&self.reference[idx])
+                    });
+
+                    let bar_height = (avg_conf * (height - 6.0) as f64) as f32;
+                    let bar_color = if has_variant {
+                        color
+                    } else {
+                        color.gamma_multiply(0.3)
+                    };
+
+                    let bar_rect = Rect::from_min_max(
+                        Pos2::new(rect.left() + i as f32 * bin_width, y + height - bar_height - 3.0),
+                        Pos2::new(rect.left() + (i + 1) as f32 * bin_width - 1.0, y + height - 3.0),
+                    );
+                    painter.rect_filled(bar_rect, 0.0, bar_color);
+                }
+            }
+        }
+    }
+
+    fn render_divergence_track(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        y: f32,
+        vis_start: u64,
+        vis_end: u64,
+        divergence: &[f64],
+        sv_likelihood: &[f64],
+    ) {
+        let height = 20.0;
+        let view_rect = Rect::from_min_max(
+            Pos2::new(rect.left(), y),
+            Pos2::new(rect.right(), y + height),
+        );
+
+        painter.rect_filled(view_rect, 0.0, Color32::from_rgb(30, 25, 25));
+
+        // Label
+        painter.text(
+            Pos2::new(rect.left() + 5.0, y + 2.0),
+            egui::Align2::LEFT_TOP,
+            "H1/H2 Div",
+            FontId::proportional(10.0),
+            Color32::from_rgb(255, 180, 100),
+        );
+
+        // Draw divergence/SV likelihood as colored bars
+        let num_bins = (rect.width() / 3.0).max(1.0) as usize;
+        let bin_width = rect.width() / num_bins as f32;
+
+        for i in 0..num_bins {
+            let bin_start = vis_start + (i as u64 * (vis_end - vis_start) / num_bins as u64);
+            let bin_end = vis_start + ((i + 1) as u64 * (vis_end - vis_start) / num_bins as u64);
+
+            let start_idx = bin_start.saturating_sub(self.region.start) as usize;
+            let end_idx = (bin_end.saturating_sub(self.region.start) as usize).min(divergence.len());
+
+            if start_idx < divergence.len() && start_idx < end_idx {
+                let avg_div: f64 = divergence[start_idx..end_idx]
+                    .iter()
+                    .sum::<f64>()
+                    / (end_idx - start_idx).max(1) as f64;
+
+                let avg_sv: f64 = sv_likelihood[start_idx..end_idx.min(sv_likelihood.len())]
+                    .iter()
+                    .sum::<f64>()
+                    / (end_idx - start_idx).max(1) as f64;
+
+                if avg_div > 0.0 {
+                    let bar_height = (avg_div * (height - 6.0) as f64) as f32;
+
+                    // Color from yellow (low likelihood) to bright red (high SV likelihood)
+                    let color = if avg_sv > 0.5 {
+                        Color32::from_rgb(255, 60, 60) // High SV likelihood - bright red
+                    } else if avg_sv > 0.1 {
+                        Color32::from_rgb(255, 180, 60) // Moderate - orange
+                    } else {
+                        Color32::from_rgb(255, 255, 100) // Low - yellow (divergent but low confidence)
+                    };
+
+                    let bar_rect = Rect::from_min_max(
+                        Pos2::new(rect.left() + i as f32 * bin_width, y + height - bar_height - 3.0),
+                        Pos2::new(rect.left() + (i + 1) as f32 * bin_width - 1.0, y + height - 3.0),
+                    );
+                    painter.rect_filled(bar_rect, 0.0, color);
+                }
             }
         }
     }
