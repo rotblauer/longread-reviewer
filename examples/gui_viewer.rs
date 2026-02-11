@@ -1434,14 +1434,15 @@ impl SVReviewerApp {
             Pos2::new(rect.right(), y + height),
         );
 
-        // Background with haplotype-tinted color
+        // Background: darken the haplotype color to ~12% intensity with a slight blue offset
+        let darken = |channel: u8| -> u8 { (channel as u16 * 30 / 255) as u8 };
         painter.rect_filled(
             view_rect,
             0.0,
             Color32::from_rgb(
-                (color.r() as u16 * 30 / 255) as u8,
-                (color.g() as u16 * 30 / 255) as u8,
-                (color.b() as u16 * 30 / 255) as u8 + 20,
+                darken(color.r()),
+                darken(color.g()),
+                darken(color.b()) + 20,
             ),
         );
 

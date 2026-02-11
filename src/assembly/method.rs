@@ -244,6 +244,11 @@ pub struct HaplotypeAssemblyResult {
     pub sv_likelihood: Vec<f64>,
 }
 
+/// Minimum per-haplotype depth (reads) required to consider a position
+/// reliable for SV likelihood scoring. Below this threshold the depth
+/// factor scales linearly toward zero.
+const MIN_DEPTH_FOR_SV_CALL: f64 = 5.0;
+
 /// Produces per-haplotype assemblies by splitting reads into haplotype groups
 /// and assembling each independently using a given inner assembly method.
 ///
@@ -341,7 +346,7 @@ impl HaplotypeAwareAssembly {
             };
 
             // Both haplotypes need adequate depth for a reliable call
-            let depth_factor = ((h1_depth.min(h2_depth) as f64) / 5.0).min(1.0);
+            let depth_factor = ((h1_depth.min(h2_depth) as f64) / MIN_DEPTH_FOR_SV_CALL).min(1.0);
             // Both haplotypes should have good confidence in their respective calls
             let conf_factor = (h1_conf * h2_conf).sqrt();
 
