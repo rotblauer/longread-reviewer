@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 use crate::alignment::AlignedRead;
+use crate::haplotype::{HaplotypeAssigner, HaplotypeLabel};
 
 /// Result of an assembly over a region.
 #[derive(Debug, Clone)]
@@ -224,6 +225,151 @@ impl AssemblyMethod for WindowConsensusAssembly {
     }
 }
 
+/// Result of per-haplotype assembly, containing separate assemblies for each
+/// detected haplotype and a divergence track highlighting positions where the
+/// two haplotypes differ.
+#[derive(Debug, Clone)]
+pub struct HaplotypeAssemblyResult {
+    /// Assembly from Haplotype 1 reads only.
+    pub hap1_assembly: AssemblyResult,
+    /// Assembly from Haplotype 2 reads only.
+    pub hap2_assembly: AssemblyResult,
+    /// Number of reads assigned to Haplotype 1.
+    pub hap1_read_count: usize,
+    /// Number of reads assigned to Haplotype 2.
+    pub hap2_read_count: usize,
+    /// Per-base divergence between the two haplotype assemblies (0.0 = same, 1.0 = different).
+    pub divergence: Vec<f64>,
+    /// Per-base SV likelihood score (0.0-1.0), derived from divergence, depth, and confidence.
+    pub sv_likelihood: Vec<f64>,
+}
+
+/// Minimum per-haplotype depth (reads) required to consider a position
+/// reliable for SV likelihood scoring. Below this threshold the depth
+/// factor scales linearly toward zero.
+const MIN_DEPTH_FOR_SV_CALL: f64 = 5.0;
+
+/// Produces per-haplotype assemblies by splitting reads into haplotype groups
+/// and assembling each independently using a given inner assembly method.
+///
+/// This is the recommended approach for reviewing structural variants: if an SV
+/// is real, each haplotype assembly should show a clean, consistent signal.
+/// Divergence between haplotypes pinpoints heterozygous events.
+pub struct HaplotypeAwareAssembly {
+    inner: ConsensusAssembly,
+}
+
+impl HaplotypeAwareAssembly {
+    pub fn new() -> Self {
+        Self {
+            inner: ConsensusAssembly,
+        }
+    }
+
+    /// Split reads by haplotype and assemble each group independently.
+    pub fn assemble_by_haplotype(
+        &self,
+        reads: &[AlignedRead],
+        reference: &[u8],
+        ref_start_pos: u64,
+    ) -> Result<HaplotypeAssemblyResult> {
+        let assigner = HaplotypeAssigner::new();
+        let assignments = assigner.assign(reads, reference);
+
+        let assignment_map: HashMap<String, HaplotypeLabel> = assignments
+            .iter()
+            .map(|a| (a.read_name.clone(), a.haplotype))
+            .collect();
+
+        let hap1_reads: Vec<AlignedRead> = reads
+            .iter()
+            .filter(|r| assignment_map.get(&r.name) == Some(&HaplotypeLabel::Hap1))
+            .cloned()
+            .collect();
+
+        let hap2_reads: Vec<AlignedRead> = reads
+            .iter()
+            .filter(|r| assignment_map.get(&r.name) == Some(&HaplotypeLabel::Hap2))
+            .cloned()
+            .collect();
+
+        let hap1_count = hap1_reads.len();
+        let hap2_count = hap2_reads.len();
+
+        let mut hap1_assembly = self.inner.assemble(&hap1_reads, reference, ref_start_pos)?;
+        hap1_assembly.method_name = "haplotype_1".to_string();
+
+        let mut hap2_assembly = self.inner.assemble(&hap2_reads, reference, ref_start_pos)?;
+        hap2_assembly.method_name = "haplotype_2".to_string();
+
+        // Compute per-base divergence and SV likelihood
+        let len = reference.len();
+        let mut divergence = vec![0.0f64; len];
+        let mut sv_likelihood = vec![0.0f64; len];
+
+        for i in 0..len {
+            let h1_base = if i < hap1_assembly.sequence.len() {
+                hap1_assembly.sequence[i]
+            } else {
+                reference[i]
+            };
+            let h2_base = if i < hap2_assembly.sequence.len() {
+                hap2_assembly.sequence[i]
+            } else {
+                reference[i]
+            };
+
+            // Divergence: do the two haplotypes disagree?
+            let is_divergent = !h1_base.eq_ignore_ascii_case(&h2_base);
+            divergence[i] = if is_divergent { 1.0 } else { 0.0 };
+
+            // SV likelihood: combine divergence, depth, and confidence signals
+            let h1_conf = if i < hap1_assembly.confidence.len() {
+                hap1_assembly.confidence[i]
+            } else {
+                0.0
+            };
+            let h2_conf = if i < hap2_assembly.confidence.len() {
+                hap2_assembly.confidence[i]
+            } else {
+                0.0
+            };
+            let h1_depth = if i < hap1_assembly.depth.len() {
+                hap1_assembly.depth[i]
+            } else {
+                0
+            };
+            let h2_depth = if i < hap2_assembly.depth.len() {
+                hap2_assembly.depth[i]
+            } else {
+                0
+            };
+
+            // Both haplotypes need adequate depth for a reliable call
+            let depth_factor = ((h1_depth.min(h2_depth) as f64) / MIN_DEPTH_FOR_SV_CALL).min(1.0);
+            // Both haplotypes should have good confidence in their respective calls
+            let conf_factor = (h1_conf * h2_conf).sqrt();
+
+            sv_likelihood[i] = divergence[i] * depth_factor * conf_factor;
+        }
+
+        Ok(HaplotypeAssemblyResult {
+            hap1_assembly,
+            hap2_assembly,
+            hap1_read_count: hap1_count,
+            hap2_read_count: hap2_count,
+            divergence,
+            sv_likelihood,
+        })
+    }
+}
+
+impl Default for HaplotypeAwareAssembly {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,5 +458,80 @@ mod tests {
         let method = ConsensusAssembly;
         let result = method.assemble(&reads, b"", 1).unwrap();
         assert!(result.sequence.is_empty());
+    }
+
+    fn make_hap_read(name: &str, start: u64, seq: &[u8], hp: Option<u8>) -> AlignedRead {
+        let len = seq.len() as u64;
+        AlignedRead {
+            name: name.to_string(),
+            chrom: "chr1".to_string(),
+            start,
+            mapq: 60,
+            cigar: vec![CigarOp::Match(seq.len() as u32)],
+            sequence: seq.to_vec(),
+            qualities: vec![30; seq.len()],
+            is_reverse: false,
+            haplotype_tag: hp,
+            end: start + len - 1,
+        }
+    }
+
+    #[test]
+    fn test_haplotype_aware_assembly_with_hp_tags() {
+        let reference = b"ACGTACGT";
+        let reads = vec![
+            make_hap_read("r1", 1, b"ACGTACGT", Some(1)),
+            make_hap_read("r2", 1, b"ACGTACGT", Some(1)),
+            make_hap_read("r3", 1, b"ATGTACGT", Some(2)),
+            make_hap_read("r4", 1, b"ATGTACGT", Some(2)),
+        ];
+
+        let method = HaplotypeAwareAssembly::new();
+        let result = method.assemble_by_haplotype(&reads, reference, 1).unwrap();
+
+        assert_eq!(result.hap1_read_count, 2);
+        assert_eq!(result.hap2_read_count, 2);
+        assert_eq!(result.hap1_assembly.sequence.len(), reference.len());
+        assert_eq!(result.hap2_assembly.sequence.len(), reference.len());
+
+        // Hap1 should match reference at position 2 (C), Hap2 should have T
+        assert_eq!(result.hap1_assembly.sequence[1], b'C');
+        assert_eq!(result.hap2_assembly.sequence[1], b'T');
+
+        // Divergence should be 1.0 at position 2, 0.0 elsewhere
+        assert_eq!(result.divergence[1], 1.0);
+        assert_eq!(result.divergence[0], 0.0);
+        assert_eq!(result.divergence[2], 0.0);
+    }
+
+    #[test]
+    fn test_haplotype_aware_assembly_no_haplotypes() {
+        let reference = b"ACGT";
+        let reads = vec![
+            make_hap_read("r1", 1, b"ACGT", None),
+            make_hap_read("r2", 1, b"ACGT", None),
+        ];
+
+        let method = HaplotypeAwareAssembly::new();
+        let result = method.assemble_by_haplotype(&reads, reference, 1).unwrap();
+
+        // Without HP tags and no variants, all reads go to Unassigned
+        assert_eq!(result.hap1_read_count, 0);
+        assert_eq!(result.hap2_read_count, 0);
+    }
+
+    #[test]
+    fn test_haplotype_aware_assembly_divergence_length() {
+        let reference = b"ACGTACGT";
+        let reads = vec![
+            make_hap_read("r1", 1, b"ACGTACGT", Some(1)),
+            make_hap_read("r2", 1, b"ACGTACGT", Some(2)),
+        ];
+
+        let method = HaplotypeAwareAssembly::new();
+        let result = method.assemble_by_haplotype(&reads, reference, 1).unwrap();
+
+        assert_eq!(result.divergence.len(), reference.len());
+        assert_eq!(result.sv_likelihood.len(), reference.len());
     }
 }

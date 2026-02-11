@@ -347,7 +347,7 @@ pub fn render_status_bar(
     }
 
     parts.push(Span::styled(
-        " [q]uit [a]ssemble [h]aplotype [←→]scroll [↑↓]reads [n]ext method ".to_string(),
+        " [q]uit [a]ssemble [h]aplotype [H]ap-assembly [←→]scroll [↑↓]reads [n]ext method ".to_string(),
         Style::default()
             .fg(Color::Yellow)
             .bg(Color::DarkGray),
