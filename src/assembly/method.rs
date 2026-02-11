@@ -370,6 +370,153 @@ impl Default for HaplotypeAwareAssembly {
     }
 }
 
+/// De Bruijn graph–based local assembly.
+///
+/// Builds a k-mer graph directly from read sequences (independent of aligner
+/// coordinates), traverses the heaviest path to produce a consensus, then maps
+/// that consensus back to the reference to fill the `AssemblyResult`.
+pub struct DeBruijnAssembly {
+    pub k: usize,
+}
+
+impl DeBruijnAssembly {
+    pub fn new(k: usize) -> Self {
+        Self { k }
+    }
+}
+
+impl Default for DeBruijnAssembly {
+    fn default() -> Self {
+        Self::new(21)
+    }
+}
+
+impl AssemblyMethod for DeBruijnAssembly {
+    fn name(&self) -> &str {
+        "debruijn"
+    }
+
+    fn assemble(&self, reads: &[AlignedRead], reference: &[u8], _ref_start_pos: u64) -> Result<AssemblyResult> {
+        let ref_len = reference.len();
+        if ref_len == 0 {
+            return Ok(AssemblyResult {
+                sequence: Vec::new(),
+                depth: Vec::new(),
+                confidence: Vec::new(),
+                method_name: self.name().to_string(),
+            });
+        }
+
+        let k = self.k;
+
+        // Fall back to reference when there are no reads or the k-mer size
+        // exceeds the reference/read lengths.
+        if reads.is_empty() || k > ref_len {
+            return Ok(AssemblyResult {
+                sequence: reference.to_vec(),
+                depth: vec![0; ref_len],
+                confidence: vec![0.0; ref_len],
+                method_name: self.name().to_string(),
+            });
+        }
+
+        // Step 1: Build quality-weighted k-mer counts from read sequences.
+        let mut kmer_counts: HashMap<Vec<u8>, f64> = HashMap::new();
+        for read in reads {
+            let seq = &read.sequence;
+            if seq.len() < k {
+                continue;
+            }
+            for i in 0..=seq.len() - k {
+                let kmer: Vec<u8> = seq[i..i + k].iter().map(|b| b.to_ascii_uppercase()).collect();
+                let qual = read.qualities.get(i).copied().unwrap_or(30) as f64;
+                *kmer_counts.entry(kmer).or_insert(0.0) += 1.0 + qual / 60.0;
+            }
+        }
+
+        if kmer_counts.is_empty() {
+            return Ok(AssemblyResult {
+                sequence: reference.to_vec(),
+                depth: vec![0; ref_len],
+                confidence: vec![0.0; ref_len],
+                method_name: self.name().to_string(),
+            });
+        }
+
+        // Step 2: Seed traversal from the k-mer matching the start of the reference.
+        let seed: Vec<u8> = reference[..k].iter().map(|b| b.to_ascii_uppercase()).collect();
+        let mut path: Vec<u8> = seed.clone();
+
+        // Step 3: Greedily extend by choosing the highest-weight successor k-mer.
+        let bases: [u8; 4] = [b'A', b'C', b'G', b'T'];
+        let max_ext = ref_len - k; // we need ref_len bases total
+        for _ in 0..max_ext {
+            let suffix = &path[path.len() - (k - 1)..];
+            let mut best_base: Option<u8> = None;
+            let mut best_weight: f64 = 0.0;
+            for &b in &bases {
+                let mut candidate = suffix.to_vec();
+                candidate.push(b);
+                if let Some(&w) = kmer_counts.get(&candidate) {
+                    if w > best_weight {
+                        best_weight = w;
+                        best_base = Some(b);
+                    }
+                }
+            }
+            match best_base {
+                Some(b) => path.push(b),
+                None => break,
+            }
+        }
+
+        // Step 4: Map the assembled consensus back to reference coordinates.
+        let mut sequence = Vec::with_capacity(ref_len);
+        let mut depth = Vec::with_capacity(ref_len);
+        let mut confidence = Vec::with_capacity(ref_len);
+
+        for i in 0..ref_len {
+            if i < path.len() {
+                sequence.push(path[i]);
+                // Depth: count reads whose k-mers cover this position.
+                let kmer_start = i.saturating_sub(k - 1);
+                let kmer_end = i.min(path.len().saturating_sub(k));
+                let mut pos_depth = 0u32;
+                for ki in kmer_start..=kmer_end {
+                    if ki + k <= path.len() {
+                        let km = &path[ki..ki + k];
+                        if kmer_counts.contains_key(km) {
+                            pos_depth += 1;
+                        }
+                    }
+                }
+                depth.push(pos_depth);
+                // Confidence: 1.0 when the path base matches the reference, scaled otherwise.
+                let conf = if path[i].to_ascii_uppercase() == reference[i].to_ascii_uppercase() {
+                    1.0
+                } else if pos_depth > 0 {
+                    0.5
+                } else {
+                    0.0
+                };
+                confidence.push(conf);
+            } else {
+                // Path ended early – fall back to reference.
+                sequence.push(reference[i]);
+                depth.push(0);
+                confidence.push(0.0);
+            }
+        }
+
+        Ok(AssemblyResult {
+            sequence,
+            depth,
+            confidence,
+            method_name: self.name().to_string(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -533,5 +680,54 @@ mod tests {
 
         assert_eq!(result.divergence.len(), reference.len());
         assert_eq!(result.sv_likelihood.len(), reference.len());
+    }
+
+    #[test]
+    fn test_debruijn_assembly_simple() {
+        let reference = b"ACGTACGTACGTACGTACGTACGT";
+        let reads = vec![
+            make_read("r1", 1, b"ACGTACGTACGTACGTACGTACGT"),
+            make_read("r2", 1, b"ACGTACGTACGTACGTACGTACGT"),
+            make_read("r3", 1, b"ACGTACGTACGTACGTACGTACGT"),
+        ];
+
+        let method = DeBruijnAssembly::default();
+        let result = method.assemble(&reads, reference, 1).unwrap();
+
+        assert_eq!(result.sequence.len(), reference.len());
+        assert_eq!(result.method_name, "debruijn");
+    }
+
+    #[test]
+    fn test_debruijn_assembly_with_variant() {
+        // Non-repetitive sequence so k-mers are unique with k=5.
+        // Reference has A at position 10, but majority of reads have G there.
+        let reference = b"AGTCCTAGGCATGACTAACGGTTC";
+        let reads = vec![
+            make_read("r1", 1, b"AGTCCTAGGCGTGACTAACGGTTC"),
+            make_read("r2", 1, b"AGTCCTAGGCGTGACTAACGGTTC"),
+            make_read("r3", 1, b"AGTCCTAGGCATGACTAACGGTTC"),
+        ];
+
+        let method = DeBruijnAssembly::new(5);
+        let result = method.assemble(&reads, reference, 1).unwrap();
+
+        assert_eq!(result.sequence.len(), reference.len());
+        // The majority base at position 10 should be G (2 reads) over A (1 read).
+        assert_eq!(result.sequence[10], b'G');
+    }
+
+    #[test]
+    fn test_debruijn_assembly_empty_reads() {
+        let reference = b"ACGTACGTACGTACGTACGTACGT";
+        let reads: Vec<AlignedRead> = vec![];
+
+        let method = DeBruijnAssembly::default();
+        let result = method.assemble(&reads, reference, 1).unwrap();
+
+        // Should fall back to reference
+        assert_eq!(result.sequence, reference.to_vec());
+        assert!(result.confidence.iter().all(|&c| c == 0.0));
+        assert!(result.depth.iter().all(|&d| d == 0));
     }
 }
