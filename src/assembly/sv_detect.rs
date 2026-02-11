@@ -156,7 +156,7 @@ impl AssemblySVCaller {
                     };
 
                     // Confidence: combine assembly signal and CIGAR support
-                    let asm_conf = 1.0 - avg_confidence.min(1.0);
+                    let asm_conf = avg_confidence.min(1.0);
                     let read_conf = (supporting as f64 / reads.len().max(1) as f64).min(1.0);
                     let confidence = (asm_conf * 0.5 + read_conf * 0.5).min(1.0);
 
