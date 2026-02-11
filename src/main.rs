@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 
 use longread_reviewer::alignment::AlignmentReader;
 use longread_reviewer::assembly::engine::AssemblyEngine;
-use longread_reviewer::assembly::method::{ConsensusAssembly, WindowConsensusAssembly};
+use longread_reviewer::assembly::method::{ConsensusAssembly, DeBruijnAssembly, WindowConsensusAssembly};
 use longread_reviewer::haplotype::HaplotypeAssigner;
 use longread_reviewer::metrics::MetricsCalculator;
 use longread_reviewer::reference::ReferenceGenome;
@@ -140,6 +140,7 @@ fn main() -> Result<()> {
                 "window_consensus" => {
                     engine.add_method(Box::new(WindowConsensusAssembly::new(window_size, overlap)))
                 }
+                "debruijn" => engine.add_method(Box::new(DeBruijnAssembly::default())),
                 _ => anyhow::bail!("unknown assembly method: {method}"),
             };
 
@@ -202,6 +203,7 @@ fn main() -> Result<()> {
             engine.add_method(Box::new(WindowConsensusAssembly::new(100, 20)));
             engine.add_method(Box::new(WindowConsensusAssembly::new(50, 10)));
             engine.add_method(Box::new(WindowConsensusAssembly::new(200, 40)));
+            engine.add_method(Box::new(DeBruijnAssembly::default()));
 
             let results = engine.evaluate_all(&reads, &ref_seq, &region)?;
 
