@@ -1,0 +1,38 @@
+Region: chr17:10958130-11017414 (59285 bp)
+Reference length: 59285 bp
+Total reads: 206
+
+=== Found target read: m64043_200201_000449/3932797/ccs ===
+  Start:    10972278
+  End:      10987101
+  Length:   15301 bp
+  Span:     14824 bp (on reference)
+  MAPQ:     60
+  Reverse:  false
+
+  CIGAR analysis:
+    Total insertions: 21 bp
+    Total deletions:  177 bp
+    Net indel:        -156 bp
+
+  No large events (>=50bp) found in CIGAR
+
+=== Found target read: m64043_200201_000449/3932797/ccs ===
+  Start:    10983128
+  End:      10983537
+  Length:   400 bp
+  Span:     410 bp (on reference)
+  MAPQ:     60
+  Reverse:  false
+
+  CIGAR analysis:
+    Total insertions: 1 bp
+    Total deletions:  11 bp
+    Net indel:        -10 bp
+
+  No large events (>=50bp) found in CIGAR
+
+=== All reads with large indels (>=100bp) ===
+  m64043_200128_181438/109183865/ccs (chr17:10976550-11007202): DEL:611bp@10987101-10987712, DEL:433bp@10987770-10988203, DEL:1264bp@10988492-10989756, DEL:1117bp@10989867-10990984, DEL:905bp@10991065-10991970, DEL:378bp@10991986-10992364
+  m64043_200128_181438/87820279/ccs (chr17:10982294-11007727): DEL:611bp@10987101-10987712, DEL:433bp@10987770-10988203, DEL:1264bp@10988492-10989756, DEL:1117bp@10989867-10990984, DEL:905bp@10991065-10991970, DEL:378bp@10991986-10992364
+  m64043_200201_000449/132973825/ccs (chr17:10982597-11004789): DEL:611bp@10987101-10987712, DEL:433bp@10987770-10988203, DEL:1264bp@10988492-10989756, DEL:1117bp@10989867-10990984, DEL:905bp@10991065-10991970, DEL:378bp@10991986-10992364

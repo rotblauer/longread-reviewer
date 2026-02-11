@@ -144,11 +144,11 @@ fn main() -> Result<()> {
             };
 
             let result = engine
-                .run_method(&method, &reads, &ref_seq)?
+                .run_method(&method, &reads, &ref_seq, region.start)?
                 .context("assembly method not found")?;
 
             let calc = MetricsCalculator::new();
-            let fitness = calc.compute_fitness(&result, &reads, &ref_seq);
+            let fitness = calc.compute_fitness(&result, &reads, &ref_seq, region.start);
 
             println!("Assembly method: {}", result.method_name);
             println!(

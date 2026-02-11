@@ -27,7 +27,12 @@ pub trait AssemblyMethod: Send + Sync {
     fn name(&self) -> &str;
 
     /// Generate an assembly from the given reads against the reference.
-    fn assemble(&self, reads: &[AlignedRead], reference: &[u8]) -> Result<AssemblyResult>;
+    ///
+    /// # Arguments
+    /// * `reads` - Aligned reads overlapping the region
+    /// * `reference` - Reference sequence for the region
+    /// * `ref_start_pos` - The genomic position where the reference slice starts (1-based)
+    fn assemble(&self, reads: &[AlignedRead], reference: &[u8], ref_start_pos: u64) -> Result<AssemblyResult>;
 }
 
 /// Simple majority-vote consensus assembly.
@@ -40,7 +45,7 @@ impl AssemblyMethod for ConsensusAssembly {
         "consensus"
     }
 
-    fn assemble(&self, reads: &[AlignedRead], reference: &[u8]) -> Result<AssemblyResult> {
+    fn assemble(&self, reads: &[AlignedRead], reference: &[u8], ref_start_pos: u64) -> Result<AssemblyResult> {
         let ref_len = reference.len();
         if ref_len == 0 {
             return Ok(AssemblyResult {
@@ -55,18 +60,16 @@ impl AssemblyMethod for ConsensusAssembly {
         let mut base_counts: Vec<HashMap<u8, f64>> = vec![HashMap::new(); ref_len];
         let mut depth = vec![0u32; ref_len];
 
-        // We assume reads are aligned to the same coordinate system as the reference slice.
-        // The reference slice starts at position 0 internally.
-        let ref_start = reads
-            .iter()
-            .filter(|r| !r.cigar.is_empty())
-            .map(|r| r.start)
-            .min()
-            .unwrap_or(0);
+        // Use the provided ref_start_pos to map genomic coordinates to array indices
+        let ref_start = ref_start_pos;
 
         for read in reads {
             let aligned_bases = read.reference_aligned_bases();
             for (ref_pos, base) in aligned_bases {
+                // Skip bases outside our reference region
+                if ref_pos < ref_start {
+                    continue;
+                }
                 let idx = (ref_pos - ref_start) as usize;
                 if idx < ref_len {
                     let quality_weight = read
@@ -136,7 +139,7 @@ impl AssemblyMethod for WindowConsensusAssembly {
         "window_consensus"
     }
 
-    fn assemble(&self, reads: &[AlignedRead], reference: &[u8]) -> Result<AssemblyResult> {
+    fn assemble(&self, reads: &[AlignedRead], reference: &[u8], ref_start_pos: u64) -> Result<AssemblyResult> {
         let ref_len = reference.len();
         if ref_len == 0 {
             return Ok(AssemblyResult {
@@ -163,25 +166,20 @@ impl AssemblyMethod for WindowConsensusAssembly {
             let window_end = std::cmp::min(window_start + self.window_size, ref_len);
             let window_ref = &reference[window_start..window_end];
 
-            // Filter reads that overlap this window.
-            let ref_start = reads
-                .iter()
-                .filter(|r| !r.cigar.is_empty())
-                .map(|r| r.start)
-                .min()
-                .unwrap_or(0);
+            // Use the provided ref_start_pos for coordinate mapping
+            let window_genomic_start = ref_start_pos + window_start as u64;
+            let window_genomic_end = ref_start_pos + window_end as u64;
 
             let window_reads: Vec<_> = reads
                 .iter()
                 .filter(|r| {
-                    let r_start = (r.start - ref_start) as usize;
-                    let r_end = (r.end - ref_start) as usize;
-                    r_start < window_end && r_end >= window_start
+                    // Filter reads that overlap this window in genomic coordinates
+                    r.start < window_genomic_end && r.end > window_genomic_start
                 })
                 .cloned()
                 .collect();
 
-            let result = inner.assemble(&window_reads, window_ref)?;
+            let result = inner.assemble(&window_reads, window_ref, window_genomic_start)?;
 
             for (i, (&base, &conf)) in result
                 .sequence
@@ -257,7 +255,7 @@ mod tests {
         ];
 
         let method = ConsensusAssembly;
-        let result = method.assemble(&reads, reference).unwrap();
+        let result = method.assemble(&reads, reference, 1).unwrap();
 
         assert_eq!(result.sequence, b"ACGTACGT");
         assert_eq!(result.depth, vec![3, 3, 3, 3, 3, 3, 3, 3]);
@@ -275,7 +273,7 @@ mod tests {
         ];
 
         let method = ConsensusAssembly;
-        let result = method.assemble(&reads, reference).unwrap();
+        let result = method.assemble(&reads, reference, 1).unwrap();
 
         assert_eq!(result.sequence[3], b'T');
     }
@@ -286,7 +284,7 @@ mod tests {
         let reads: Vec<AlignedRead> = vec![];
 
         let method = ConsensusAssembly;
-        let result = method.assemble(&reads, reference).unwrap();
+        let result = method.assemble(&reads, reference, 1).unwrap();
 
         // Should fall back to reference
         assert_eq!(result.sequence, b"ACGT");
@@ -302,7 +300,7 @@ mod tests {
         ];
 
         let method = WindowConsensusAssembly::new(6, 2);
-        let result = method.assemble(&reads, reference).unwrap();
+        let result = method.assemble(&reads, reference, 1).unwrap();
 
         assert_eq!(result.sequence.len(), reference.len());
     }
@@ -312,7 +310,7 @@ mod tests {
         let reads: Vec<AlignedRead> = vec![];
 
         let method = ConsensusAssembly;
-        let result = method.assemble(&reads, b"").unwrap();
+        let result = method.assemble(&reads, b"", 1).unwrap();
         assert!(result.sequence.is_empty());
     }
 }

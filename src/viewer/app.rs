@@ -75,10 +75,10 @@ impl App {
         let method_name = methods[self.current_method % methods.len()];
         if let Some(assembly) = self
             .engine
-            .run_method(method_name, &self.reads, &self.reference)?
+            .run_method(method_name, &self.reads, &self.reference, self.region.start)?
         {
             let calc = MetricsCalculator::new();
-            let fitness = calc.compute_fitness(&assembly, &self.reads, &self.reference);
+            let fitness = calc.compute_fitness(&assembly, &self.reads, &self.reference, self.region.start);
             self.fitness = Some(fitness);
             self.assembly = Some(assembly);
         }

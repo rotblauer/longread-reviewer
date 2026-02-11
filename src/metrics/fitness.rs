@@ -68,6 +68,7 @@ impl MetricsCalculator {
         assembly: &AssemblyResult,
         reads: &[AlignedRead],
         reference: &[u8],
+        ref_start_pos: u64,
     ) -> FitnessScore {
         let len = assembly.sequence.len();
         if len == 0 {
@@ -80,12 +81,29 @@ impl MetricsCalculator {
             };
         }
 
-        let ref_start = reads
+        // Use the provided ref_start_pos for coordinate mapping
+        let ref_start = ref_start_pos;
+
+        // Pre-compute average quality for each read
+        let read_avg_qualities: Vec<f64> = reads
             .iter()
-            .filter(|r| !r.cigar.is_empty())
-            .map(|r| r.start)
-            .min()
-            .unwrap_or(1);
+            .map(|r| {
+                if r.qualities.is_empty() {
+                    30.0
+                } else {
+                    r.qualities.iter().map(|&q| q as f64).sum::<f64>() / r.qualities.len() as f64
+                }
+            })
+            .collect();
+
+        // Build a position -> Vec<(read_idx, base)> index for O(1) position lookup
+        use std::collections::HashMap;
+        let mut pos_index: HashMap<u64, Vec<(usize, u8)>> = HashMap::new();
+        for (read_idx, read) in reads.iter().enumerate() {
+            for (rp, base) in read.reference_aligned_bases() {
+                pos_index.entry(rp).or_default().push((read_idx, base));
+            }
+        }
 
         let mut base_metrics = Vec::with_capacity(len);
 
@@ -105,22 +123,13 @@ impl MetricsCalculator {
             let mut total_count = 0u32;
             let mut quality_sum = 0.0f64;
 
-            for read in reads {
-                for &(rp, base) in &read.reference_aligned_bases() {
-                    if rp == ref_pos {
-                        total_count += 1;
-                        if base.eq_ignore_ascii_case(&assembly_base) {
-                            agree_count += 1;
-                        }
-                        // Use the average quality of the read as a proxy
-                        let avg_q = if read.qualities.is_empty() {
-                            30.0
-                        } else {
-                            read.qualities.iter().map(|&q| q as f64).sum::<f64>()
-                                / read.qualities.len() as f64
-                        };
-                        quality_sum += avg_q;
+            if let Some(bases_at_pos) = pos_index.get(&ref_pos) {
+                for &(read_idx, base) in bases_at_pos {
+                    total_count += 1;
+                    if base.eq_ignore_ascii_case(&assembly_base) {
+                        agree_count += 1;
                     }
+                    quality_sum += read_avg_qualities[read_idx];
                 }
             }
 
@@ -238,7 +247,7 @@ mod tests {
         };
 
         let calc = MetricsCalculator::new();
-        let fitness = calc.compute_fitness(&assembly, &reads, reference);
+        let fitness = calc.compute_fitness(&assembly, &reads, reference, 1);
 
         assert_eq!(fitness.mean_agreement, 1.0);
         assert_eq!(fitness.reference_identity, 1.0);
@@ -262,7 +271,7 @@ mod tests {
         };
 
         let calc = MetricsCalculator::new();
-        let fitness = calc.compute_fitness(&assembly, &reads, reference);
+        let fitness = calc.compute_fitness(&assembly, &reads, reference, 1);
 
         // Position 2 should be marked as variant
         assert!(fitness.base_metrics[1].is_variant);
@@ -280,7 +289,7 @@ mod tests {
             method_name: "test".to_string(),
         };
 
-        let fitness = calc.compute_fitness(&assembly, &[], b"");
+        let fitness = calc.compute_fitness(&assembly, &[], b"", 1);
         assert_eq!(fitness.overall, 0.0);
     }
 
@@ -298,8 +307,8 @@ mod tests {
         let calc1 = MetricsCalculator::with_weights(1.0, 0.0, 0.0);
         let calc2 = MetricsCalculator::with_weights(0.0, 1.0, 0.0);
 
-        let f1 = calc1.compute_fitness(&assembly, &reads, reference);
-        let f2 = calc2.compute_fitness(&assembly, &reads, reference);
+        let f1 = calc1.compute_fitness(&assembly, &reads, reference, 1);
+        let f2 = calc2.compute_fitness(&assembly, &reads, reference, 1);
 
         // With 100% agreement weight, score should be high (agreement = 1.0)
         assert!(f1.overall > f2.overall);

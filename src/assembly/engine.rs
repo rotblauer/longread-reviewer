@@ -41,14 +41,14 @@ impl AssemblyEngine {
         &self,
         reads: &[AlignedRead],
         reference: &[u8],
-        _region: &Region,
+        region: &Region,
     ) -> Result<Vec<EvaluationResult>> {
         let calculator = MetricsCalculator::new();
         let mut results = Vec::new();
 
         for method in &self.methods {
-            let assembly = method.assemble(reads, reference)?;
-            let fitness = calculator.compute_fitness(&assembly, reads, reference);
+            let assembly = method.assemble(reads, reference, region.start)?;
+            let fitness = calculator.compute_fitness(&assembly, reads, reference, region.start);
 
             results.push(EvaluationResult { assembly, fitness });
         }
@@ -70,10 +70,11 @@ impl AssemblyEngine {
         method_name: &str,
         reads: &[AlignedRead],
         reference: &[u8],
+        ref_start_pos: u64,
     ) -> Result<Option<AssemblyResult>> {
         for method in &self.methods {
             if method.name() == method_name {
-                return method.assemble(reads, reference).map(Some);
+                return method.assemble(reads, reference, ref_start_pos).map(Some);
             }
         }
         Ok(None)
@@ -156,10 +157,10 @@ mod tests {
         let reference = b"ACGT";
         let reads = vec![make_read("r1", 1, b"ACGT")];
 
-        let result = engine.run_method("consensus", &reads, reference).unwrap();
+        let result = engine.run_method("consensus", &reads, reference, 1).unwrap();
         assert!(result.is_some());
 
-        let missing = engine.run_method("nonexistent", &reads, reference).unwrap();
+        let missing = engine.run_method("nonexistent", &reads, reference, 1).unwrap();
         assert!(missing.is_none());
     }
 }

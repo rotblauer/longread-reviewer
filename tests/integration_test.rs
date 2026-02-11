@@ -50,36 +50,36 @@ fn event_region() -> Region {
 }
 
 /// Load reads + reference for the full region.
-fn load_full() -> (Vec<AlignedRead>, Vec<u8>) {
+fn load_full() -> (Vec<AlignedRead>, Vec<u8>, Region) {
     let region = full_region();
     let reads = AlignmentReader::read_bam(&test_bam_path(), &region)
         .expect("failed to read BAM");
     let reference = ReferenceGenome::from_file(&test_ref_path())
         .expect("failed to read reference");
     let ref_seq = reference.fetch(&region).expect("failed to fetch region");
-    (reads, ref_seq)
+    (reads, ref_seq, region)
 }
 
 /// Load reads + reference for the sub-region.
-fn load_sub() -> (Vec<AlignedRead>, Vec<u8>) {
+fn load_sub() -> (Vec<AlignedRead>, Vec<u8>, Region) {
     let region = sub_region();
     let reads = AlignmentReader::read_bam(&test_bam_path(), &region)
         .expect("failed to read BAM");
     let reference = ReferenceGenome::from_file(&test_ref_path())
         .expect("failed to read reference");
     let ref_seq = reference.fetch(&region).expect("failed to fetch region");
-    (reads, ref_seq)
+    (reads, ref_seq, region)
 }
 
 /// Load reads + reference for the event region.
-fn load_event() -> (Vec<AlignedRead>, Vec<u8>) {
+fn load_event() -> (Vec<AlignedRead>, Vec<u8>, Region) {
     let region = event_region();
     let reads = AlignmentReader::read_bam(&test_bam_path(), &region)
         .expect("failed to read BAM");
     let reference = ReferenceGenome::from_file(&test_ref_path())
         .expect("failed to read reference");
     let ref_seq = reference.fetch(&region).expect("failed to fetch region");
-    (reads, ref_seq)
+    (reads, ref_seq, region)
 }
 
 // ===========================================================================
@@ -161,7 +161,7 @@ fn test_read_bam_empty_region() {
 
 #[test]
 fn test_all_reads_on_correct_chrom() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     for read in &reads {
         assert_eq!(
             read.chrom, "chr17",
@@ -173,7 +173,7 @@ fn test_all_reads_on_correct_chrom() {
 
 #[test]
 fn test_read_names_are_nonempty() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     for read in &reads {
         assert!(
             !read.name.is_empty(),
@@ -184,7 +184,7 @@ fn test_read_names_are_nonempty() {
 
 #[test]
 fn test_read_names_look_like_pacbio_ccs() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     for read in &reads {
         assert!(
             read.name.contains("/ccs"),
@@ -196,7 +196,7 @@ fn test_read_names_look_like_pacbio_ccs() {
 
 #[test]
 fn test_reads_have_valid_coordinates() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     for read in &reads {
         assert!(
             read.end >= read.start,
@@ -208,7 +208,7 @@ fn test_reads_have_valid_coordinates() {
 
 #[test]
 fn test_reads_have_cigar() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     for read in &reads {
         assert!(
             !read.cigar.is_empty(),
@@ -220,7 +220,7 @@ fn test_reads_have_cigar() {
 
 #[test]
 fn test_reads_have_sequence() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     for read in &reads {
         assert!(
             !read.sequence.is_empty(),
@@ -232,7 +232,7 @@ fn test_reads_have_sequence() {
 
 #[test]
 fn test_reads_have_qualities() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     for read in &reads {
         assert!(
             !read.qualities.is_empty(),
@@ -252,7 +252,7 @@ fn test_reads_have_qualities() {
 
 #[test]
 fn test_reads_have_valid_mapq() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     for read in &reads {
         assert!(
             read.mapq > 0,
@@ -264,7 +264,7 @@ fn test_reads_have_valid_mapq() {
 
 #[test]
 fn test_reads_are_long_reads() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     let avg_len: f64 =
         reads.iter().map(|r| r.sequence.len() as f64).sum::<f64>() / reads.len() as f64;
     assert!(
@@ -276,7 +276,7 @@ fn test_reads_are_long_reads() {
 
 #[test]
 fn test_hp_tags_are_valid() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     for read in &reads {
         if let Some(hp) = read.haplotype_tag {
             assert!(
@@ -290,7 +290,7 @@ fn test_hp_tags_are_valid() {
 
 #[test]
 fn test_reads_have_both_strands() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     let forward = reads.iter().filter(|r| !r.is_reverse).count();
     let reverse = reads.iter().filter(|r| r.is_reverse).count();
     assert!(forward > 0, "No forward-strand reads");
@@ -299,7 +299,7 @@ fn test_reads_have_both_strands() {
 
 #[test]
 fn test_cigar_ops_are_valid_types() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     for read in &reads {
         for op in &read.cigar {
             match op {
@@ -314,7 +314,7 @@ fn test_cigar_ops_are_valid_types() {
 
 #[test]
 fn test_cigar_read_length_matches_sequence() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     for read in &reads {
         let cigar_read_len: u32 = read.cigar.iter().map(|op| op.read_len()).sum();
         assert_eq!(
@@ -330,7 +330,7 @@ fn test_cigar_read_length_matches_sequence() {
 
 #[test]
 fn test_aligned_sequence_nonempty() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     for read in &reads {
         let aligned = read.aligned_sequence();
         assert!(
@@ -343,7 +343,7 @@ fn test_aligned_sequence_nonempty() {
 
 #[test]
 fn test_reference_aligned_bases_nonempty() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     for read in &reads {
         let bases = read.reference_aligned_bases();
         assert!(
@@ -356,7 +356,7 @@ fn test_reference_aligned_bases_nonempty() {
 
 #[test]
 fn test_reference_aligned_bases_positions_ascending() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     for read in &reads {
         let bases = read.reference_aligned_bases();
         for window in bases.windows(2) {
@@ -373,7 +373,7 @@ fn test_reference_aligned_bases_positions_ascending() {
 
 #[test]
 fn test_reference_aligned_bases_are_valid_nucleotides() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     let valid = b"ACGTNacgtn";
     for read in &reads {
         let bases = read.reference_aligned_bases();
@@ -466,9 +466,9 @@ fn test_reference_fetch_outside_fragment() {
 
 #[test]
 fn test_consensus_assembly_produces_output() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = ConsensusAssembly;
-    let result = method.assemble(&reads, &ref_seq).unwrap();
+    let result = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     assert_eq!(
         result.sequence.len(),
@@ -482,9 +482,9 @@ fn test_consensus_assembly_produces_output() {
 
 #[test]
 fn test_consensus_assembly_has_depth() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = ConsensusAssembly;
-    let result = method.assemble(&reads, &ref_seq).unwrap();
+    let result = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     let mean_depth: f64 =
         result.depth.iter().map(|&d| d as f64).sum::<f64>() / result.depth.len() as f64;
@@ -497,9 +497,9 @@ fn test_consensus_assembly_has_depth() {
 
 #[test]
 fn test_consensus_confidence_in_range() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = ConsensusAssembly;
-    let result = method.assemble(&reads, &ref_seq).unwrap();
+    let result = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     for (i, &conf) in result.confidence.iter().enumerate() {
         assert!(
@@ -512,9 +512,9 @@ fn test_consensus_confidence_in_range() {
 
 #[test]
 fn test_consensus_bases_are_valid() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = ConsensusAssembly;
-    let result = method.assemble(&reads, &ref_seq).unwrap();
+    let result = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     let valid = b"ACGTNacgtn";
     for (i, &base) in result.sequence.iter().enumerate() {
@@ -533,9 +533,9 @@ fn test_consensus_bases_are_valid() {
 
 #[test]
 fn test_window_consensus_assembly_produces_output() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = WindowConsensusAssembly::new(100, 20);
-    let result = method.assemble(&reads, &ref_seq).unwrap();
+    let result = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     assert_eq!(result.sequence.len(), ref_seq.len());
     assert_eq!(result.method_name, "window_consensus");
@@ -543,11 +543,11 @@ fn test_window_consensus_assembly_produces_output() {
 
 #[test]
 fn test_window_consensus_various_sizes() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
 
     for (window, overlap) in &[(50, 10), (100, 20), (200, 40), (500, 100)] {
         let method = WindowConsensusAssembly::new(*window, *overlap);
-        let result = method.assemble(&reads, &ref_seq).unwrap();
+        let result = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
         assert_eq!(
             result.sequence.len(),
@@ -565,9 +565,9 @@ fn test_window_consensus_various_sizes() {
 
 #[test]
 fn test_window_consensus_confidence_in_range() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = WindowConsensusAssembly::new(100, 20);
-    let result = method.assemble(&reads, &ref_seq).unwrap();
+    let result = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     for (i, &conf) in result.confidence.iter().enumerate() {
         assert!(
@@ -584,7 +584,7 @@ fn test_window_consensus_confidence_in_range() {
 
 #[test]
 fn test_engine_evaluate_all_with_test_data() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let region = event_region();
 
     let mut engine = AssemblyEngine::new();
@@ -608,12 +608,12 @@ fn test_engine_evaluate_all_with_test_data() {
 
 #[test]
 fn test_engine_run_specific_method_with_test_data() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
 
     let mut engine = AssemblyEngine::new();
     engine.add_method(Box::new(ConsensusAssembly));
 
-    let result = engine.run_method("consensus", &reads, &ref_seq).unwrap();
+    let result = engine.run_method("consensus", &reads, &ref_seq, 1).unwrap();
     assert!(result.is_some());
 
     let assembly = result.unwrap();
@@ -623,12 +623,12 @@ fn test_engine_run_specific_method_with_test_data() {
 
 #[test]
 fn test_engine_nonexistent_method() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
 
     let mut engine = AssemblyEngine::new();
     engine.add_method(Box::new(ConsensusAssembly));
 
-    let result = engine.run_method("nonexistent", &reads, &ref_seq).unwrap();
+    let result = engine.run_method("nonexistent", &reads, &ref_seq, 1).unwrap();
     assert!(result.is_none());
 }
 
@@ -638,7 +638,7 @@ fn test_engine_nonexistent_method() {
 
 #[test]
 fn test_haplotype_assignment_count_matches_reads() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let assigner = HaplotypeAssigner::new();
     let assignments = assigner.assign(&reads, &ref_seq);
 
@@ -651,7 +651,7 @@ fn test_haplotype_assignment_count_matches_reads() {
 
 #[test]
 fn test_haplotype_assignments_have_names() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let assigner = HaplotypeAssigner::new();
     let assignments = assigner.assign(&reads, &ref_seq);
 
@@ -662,7 +662,7 @@ fn test_haplotype_assignments_have_names() {
 
 #[test]
 fn test_haplotype_assignment_confidence_in_range() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let assigner = HaplotypeAssigner::new();
     let assignments = assigner.assign(&reads, &ref_seq);
 
@@ -677,7 +677,7 @@ fn test_haplotype_assignment_confidence_in_range() {
 
 #[test]
 fn test_haplotype_assignment_matches_hp_tags() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let assigner = HaplotypeAssigner::new();
     let assignments = assigner.assign(&reads, &ref_seq);
 
@@ -715,12 +715,12 @@ fn test_haplotype_label_display() {
 
 #[test]
 fn test_fitness_score_with_test_data() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = ConsensusAssembly;
-    let assembly = method.assemble(&reads, &ref_seq).unwrap();
+    let assembly = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     let calc = MetricsCalculator::new();
-    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
+    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq, region.start);
 
     assert!(
         fitness.overall > 0.0 && fitness.overall <= 1.0,
@@ -731,12 +731,12 @@ fn test_fitness_score_with_test_data() {
 
 #[test]
 fn test_fitness_mean_agreement() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = ConsensusAssembly;
-    let assembly = method.assemble(&reads, &ref_seq).unwrap();
+    let assembly = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     let calc = MetricsCalculator::new();
-    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
+    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq, region.start);
 
     assert!(
         fitness.mean_agreement > 0.5,
@@ -752,12 +752,12 @@ fn test_fitness_mean_agreement() {
 
 #[test]
 fn test_fitness_mean_depth() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = ConsensusAssembly;
-    let assembly = method.assemble(&reads, &ref_seq).unwrap();
+    let assembly = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     let calc = MetricsCalculator::new();
-    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
+    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq, region.start);
 
     assert!(
         fitness.mean_depth > 1.0,
@@ -768,12 +768,12 @@ fn test_fitness_mean_depth() {
 
 #[test]
 fn test_fitness_base_metrics_length() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = ConsensusAssembly;
-    let assembly = method.assemble(&reads, &ref_seq).unwrap();
+    let assembly = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     let calc = MetricsCalculator::new();
-    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
+    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq, region.start);
 
     assert_eq!(
         fitness.base_metrics.len(),
@@ -784,12 +784,12 @@ fn test_fitness_base_metrics_length() {
 
 #[test]
 fn test_fitness_base_metrics_agreement_in_range() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = ConsensusAssembly;
-    let assembly = method.assemble(&reads, &ref_seq).unwrap();
+    let assembly = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     let calc = MetricsCalculator::new();
-    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
+    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq, region.start);
 
     for metric in &fitness.base_metrics {
         assert!(
@@ -803,17 +803,17 @@ fn test_fitness_base_metrics_agreement_in_range() {
 
 #[test]
 fn test_fitness_custom_weights() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = ConsensusAssembly;
-    let assembly = method.assemble(&reads, &ref_seq).unwrap();
+    let assembly = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     let calc_agreement = MetricsCalculator::with_weights(1.0, 0.0, 0.0);
     let calc_depth = MetricsCalculator::with_weights(0.0, 1.0, 0.0);
     let calc_quality = MetricsCalculator::with_weights(0.0, 0.0, 1.0);
 
-    let f_agreement = calc_agreement.compute_fitness(&assembly, &reads, &ref_seq);
-    let f_depth = calc_depth.compute_fitness(&assembly, &reads, &ref_seq);
-    let f_quality = calc_quality.compute_fitness(&assembly, &reads, &ref_seq);
+    let f_agreement = calc_agreement.compute_fitness(&assembly, &reads, &ref_seq, region.start);
+    let f_depth = calc_depth.compute_fitness(&assembly, &reads, &ref_seq, region.start);
+    let f_quality = calc_quality.compute_fitness(&assembly, &reads, &ref_seq, region.start);
 
     assert!((0.0..=1.0).contains(&f_agreement.overall));
     assert!((0.0..=1.0).contains(&f_depth.overall));
@@ -832,17 +832,17 @@ fn test_fitness_custom_weights() {
 
 #[test]
 fn test_full_pipeline_assemble_and_evaluate() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let region = event_region();
 
     // 1. Assembly
     let method = ConsensusAssembly;
-    let assembly = method.assemble(&reads, &ref_seq).unwrap();
+    let assembly = method.assemble(&reads, &ref_seq, region.start).unwrap();
     assert!(!assembly.sequence.is_empty());
 
     // 2. Metrics
     let calc = MetricsCalculator::new();
-    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
+    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq, region.start);
     assert!(fitness.overall > 0.0);
 
     // 3. Haplotyping
@@ -860,20 +860,20 @@ fn test_full_pipeline_assemble_and_evaluate() {
 
 #[test]
 fn test_full_pipeline_sub_region() {
-    let (reads, ref_seq) = load_sub();
+    let (reads, ref_seq, region) = load_sub();
 
     let method = ConsensusAssembly;
-    let assembly = method.assemble(&reads, &ref_seq).unwrap();
+    let assembly = method.assemble(&reads, &ref_seq, region.start).unwrap();
     assert_eq!(assembly.sequence.len(), ref_seq.len());
 }
 
 #[test]
 fn test_different_assembly_methods_produce_different_results() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
 
-    let consensus = ConsensusAssembly.assemble(&reads, &ref_seq).unwrap();
+    let consensus = ConsensusAssembly.assemble(&reads, &ref_seq, region.start).unwrap();
     let window = WindowConsensusAssembly::new(50, 10)
-        .assemble(&reads, &ref_seq)
+        .assemble(&reads, &ref_seq, region.start)
         .unwrap();
 
     assert_eq!(consensus.sequence.len(), window.sequence.len());
@@ -888,7 +888,7 @@ fn test_different_assembly_methods_produce_different_results() {
 fn test_app_creation_with_test_data() {
     use longread_reviewer::viewer::App;
 
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let region = event_region();
     let app = App::new(region, ref_seq.clone(), reads.clone());
 
@@ -902,7 +902,7 @@ fn test_app_creation_with_test_data() {
 fn test_app_run_assembly_with_test_data() {
     use longread_reviewer::viewer::App;
 
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let region = event_region();
     let mut app = App::new(region, ref_seq, reads);
 
@@ -915,7 +915,7 @@ fn test_app_run_assembly_with_test_data() {
 fn test_app_assign_haplotypes_with_test_data() {
     use longread_reviewer::viewer::App;
 
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let num_reads = reads.len();
     let region = event_region();
     let mut app = App::new(region, ref_seq, reads);
@@ -928,7 +928,7 @@ fn test_app_assign_haplotypes_with_test_data() {
 fn test_app_next_method_cycles() {
     use longread_reviewer::viewer::App;
 
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let region = event_region();
     let mut app = App::new(region, ref_seq, reads);
 
@@ -947,7 +947,7 @@ fn test_app_next_method_cycles() {
 fn test_app_evaluate_all_with_test_data() {
     use longread_reviewer::viewer::App;
 
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let region = event_region();
     let app = App::new(region, ref_seq, reads);
 
@@ -999,7 +999,7 @@ fn test_region_display_roundtrip() {
 
 #[test]
 fn test_reads_contain_large_indels() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
     let mut large_ins_ops = 0usize;
     let mut large_del_ops = 0usize;
 
@@ -1021,9 +1021,9 @@ fn test_reads_contain_large_indels() {
 
 #[test]
 fn test_assembly_diverges_from_reference_in_event_region() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = ConsensusAssembly;
-    let result = method.assemble(&reads, &ref_seq).unwrap();
+    let result = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     let matches = result
         .sequence
@@ -1044,12 +1044,12 @@ fn test_assembly_diverges_from_reference_in_event_region() {
 
 #[test]
 fn test_metrics_detect_variant_positions_in_event_region() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = ConsensusAssembly;
-    let assembly = method.assemble(&reads, &ref_seq).unwrap();
+    let assembly = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     let calc = MetricsCalculator::new();
-    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
+    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq, region.start);
 
     let variant_count = fitness.base_metrics.iter().filter(|m| m.is_variant).count();
     assert!(
@@ -1060,7 +1060,7 @@ fn test_metrics_detect_variant_positions_in_event_region() {
 
 #[test]
 fn test_multiple_indel_cigar_ops_per_read() {
-    let (reads, _) = load_full();
+    let (reads, _, _region) = load_full();
 
     let mut total_ins_ops = 0usize;
     let mut total_del_ops = 0usize;
@@ -1088,7 +1088,7 @@ fn test_multiple_indel_cigar_ops_per_read() {
 
 #[test]
 fn test_sub_region_reads_overlap_event() {
-    let (reads, _) = load_sub();
+    let (reads, _, _region) = load_sub();
     assert!(
         reads.len() >= 10,
         "Expected substantial coverage in sub-region near event, got {}",
@@ -1098,7 +1098,7 @@ fn test_sub_region_reads_overlap_event() {
 
 #[test]
 fn test_haplotype_clustering_produces_assignments_in_event_region() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let assigner = HaplotypeAssigner::new();
     let assignments = assigner.assign(&reads, &ref_seq);
 
@@ -1130,12 +1130,12 @@ fn test_haplotype_clustering_produces_assignments_in_event_region() {
 
 #[test]
 fn test_fitness_reference_identity_lower_in_event_region() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = ConsensusAssembly;
-    let assembly = method.assemble(&reads, &ref_seq).unwrap();
+    let assembly = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     let calc = MetricsCalculator::new();
-    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
+    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq, region.start);
 
     // A region with a complex event should show reference identity < 1.0
     assert!(
@@ -1147,9 +1147,9 @@ fn test_fitness_reference_identity_lower_in_event_region() {
 
 #[test]
 fn test_event_region_has_depth_coverage() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = ConsensusAssembly;
-    let result = method.assemble(&reads, &ref_seq).unwrap();
+    let result = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     let positions_with_coverage = result.depth.iter().filter(|&&d| d > 0).count();
     let coverage_fraction = positions_with_coverage as f64 / result.depth.len() as f64;
@@ -1162,7 +1162,7 @@ fn test_event_region_has_depth_coverage() {
 
 #[test]
 fn test_assembly_methods_rank_reasonably_on_event_data() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let region = event_region();
 
     let mut engine = AssemblyEngine::new();
@@ -1189,12 +1189,12 @@ fn test_assembly_methods_rank_reasonably_on_event_data() {
 
 #[test]
 fn test_variant_positions_cluster_in_event() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = ConsensusAssembly;
-    let assembly = method.assemble(&reads, &ref_seq).unwrap();
+    let assembly = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     let calc = MetricsCalculator::new();
-    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
+    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq, region.start);
 
     // Look for clusters of variant positions (characteristic of complex events).
     let variant_positions: Vec<u64> = fitness
@@ -1216,12 +1216,12 @@ fn test_variant_positions_cluster_in_event() {
 
 #[test]
 fn test_high_read_agreement_despite_reference_divergence() {
-    let (reads, ref_seq) = load_event();
+    let (reads, ref_seq, region) = load_event();
     let method = ConsensusAssembly;
-    let assembly = method.assemble(&reads, &ref_seq).unwrap();
+    let assembly = method.assemble(&reads, &ref_seq, region.start).unwrap();
 
     let calc = MetricsCalculator::new();
-    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq);
+    let fitness = calc.compute_fitness(&assembly, &reads, &ref_seq, region.start);
 
     // In a complex event, reads may consistently differ from the reference
     // but agree with each other (high agreement, low reference identity).

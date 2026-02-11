@@ -1,17 +1,51 @@
 # longread-reviewer
 
-A terminal-based long-read alignment viewer with local assembly generation, haplotype-aware read visualization, and per-base fitness evaluation metrics.
+A terminal-based long-read alignment viewer with **structural variant detection**, local assembly generation, haplotype-aware read visualization, and per-base fitness evaluation metrics.
 
 ## Features
 
+- **Structural Variant Detection**: Automatically detects large insertions and deletions from read CIGARs
+- **Interactive IGV-like Viewer**: Navigate through alignments, jump between SVs, and inspect sequences at base-level
 - **BAM/CRAM Alignment Loading**: Efficiently loads aligned reads from indexed BAM files for any genomic region
-- **Interactive TUI Viewer**: IGV-like terminal visualization with colored nucleotides, mismatch highlighting, and scrollable pileup view
-- **Dynamic Local Assembly**: Generate consensus assemblies on-the-fly for any region using pluggable assembly methods
+- **Dynamic Local Assembly**: Generate consensus assemblies on-the-fly using pluggable assembly methods
 - **Haplotype Assignment**: Automatically assign reads to haplotypes using HP tags or allele-based clustering
 - **Per-Base Fitness Metrics**: Quantitative evaluation of assembly quality including agreement, depth, and quality scores
 - **Assembly Method Evaluation**: Compare multiple assembly strategies and automatically rank them by fitness score
 
-## Usage
+## Quick Start: Interactive Viewer
+
+```bash
+cargo run --release --example interactive_viewer
+```
+
+This launches an IGV-like terminal interface with the test data (NA19240 HiFi reads on chr17).
+
+### Interactive Viewer Controls
+
+**Navigation:**
+- `←` / `→` — Scroll 10bp (hold `Shift` for 100bp)
+- `↑` / `↓` — Scroll through reads
+- `Home` / `End` — Jump to start/end of region
+- `PageUp` / `PageDown` — Scroll 20 reads
+
+**Structural Variants:**
+- `Tab` / `]` — Jump to next SV
+- `Shift+Tab` / `[` — Jump to previous SV  
+- `Enter` — Jump to selected SV
+- `s` — Toggle SV panel
+
+**Assembly & Analysis:**
+- `a` — Run assembly for current region
+- `n` — Cycle to next assembly method
+- `h` — Assign reads to haplotypes
+
+**Display:**
+- `i` — Toggle insertion display
+- `m` — Toggle mismatch highlighting
+- `?` / `F1` — Show help
+- `q` / `Esc` — Quit
+
+## Command Line Usage
 
 ### View alignments interactively
 
@@ -22,14 +56,6 @@ longread-reviewer view \
   --region chr1:1000-2000
 ```
 
-**Keyboard controls:**
-- `←` / `→` — Scroll horizontally
-- `↑` / `↓` — Scroll through reads
-- `a` — Run assembly for current region
-- `h` — Assign reads to haplotypes
-- `n` — Cycle to next assembly method
-- `e` — Evaluate all assembly methods
-- `q` / `Esc` — Quit
 
 ### Generate a local assembly
 
