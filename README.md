@@ -2,7 +2,13 @@
 
 A terminal-based and GUI long-read alignment viewer with **structural variant detection**, **dynamic local assembly** (independent of the original aligner), haplotype-aware read visualization, and per-base fitness evaluation metrics.
 
-> **AI-generated content**: Portions of this repository (including code and documentation) were produced with AI assistance. Review and validate all outputs independently before using in research, clinical, or production contexts.
+> ⚠️ **Prototype generated via iterative AI prompting.** This repository (code, docs, and examples) was produced by iteratively prompting AI models as a rapid prototype. Review every component carefully and validate independently before relying on it for research, clinical, or production use.
+
+## Prototype status
+
+- Experimental, research-only prototype with no guarantees on accuracy, safety, or performance.
+- Generated through iterative AI prompting; expect rough edges and simplifications typical of LLM-produced code.
+- Please file issues or patches where you spot problems so others are not surprised.
 
 ## Features
 
@@ -266,6 +272,16 @@ use longread_reviewer::assembly::engine::AssemblyEngine;
 let mut engine = AssemblyEngine::new();
 engine.add_method(Box::new(MyAssembly));
 ```
+
+## AI review notes and common pitfalls
+
+These are areas that warrant extra manual review because they reflect common LLM-generated shortcuts:
+
+- **Strand handling in alignments** (`src/alignment/reader.rs`): helper methods ignore the `is_reverse` flag, so reverse-strand reads are not reverse-complemented before consensus/metrics, which can invert bases in pileups.
+- **Quality and depth heuristics in consensus** (`src/assembly/method.rs`): consensus weighting reuses only the first quality score per read and counts depth without indel-aware adjustments, so confidence can be inflated relative to the true pileup.
+- **Naïve haplotype clustering** (`src/haplotype/assign.rs`): allele-based grouping is O(N×L) over reads and bases, ignores indels/quality, and drops ties to `Unassigned`, making phasing brittle on sparse or noisy data.
+- **Fitness scoring trust in assembly output** (`src/metrics/fitness.rs`): depth/confidence come from the assembly result instead of recalculating from raw reads, so scores may look better than the underlying pileup warrants if assemblies truncate or misplace bases.
+- **Reference-biased de Bruijn assembly** (`src/assembly/method.rs`): the graph traversal seeds with the reference k-mer and caps length to the reference window, so real structural variants or low-coverage gaps can collapse back to the reference path with optimistic confidence.
 
 ## Building
 
