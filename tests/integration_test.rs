@@ -13,8 +13,9 @@ use std::path::PathBuf;
 use longread_reviewer::alignment::{AlignedRead, AlignmentReader, CigarOp};
 use longread_reviewer::assembly::engine::AssemblyEngine;
 use longread_reviewer::assembly::method::{
-    AssemblyMethod, ConsensusAssembly, WindowConsensusAssembly,
+    AssemblyMethod, ConsensusAssembly, DeBruijnAssembly, WindowConsensusAssembly,
 };
+use longread_reviewer::assembly::sv_detect::AssemblySVCaller;
 use longread_reviewer::haplotype::{HaplotypeAssigner, HaplotypeLabel};
 use longread_reviewer::metrics::MetricsCalculator;
 use longread_reviewer::reference::ReferenceGenome;
@@ -896,6 +897,98 @@ fn test_app_creation_with_test_data() {
     assert_eq!(app.reference.len(), ref_seq.len());
     assert!(!app.should_quit);
     assert!(app.assembly.is_none());
+}
+
+// ===========================================================================
+// 11. De Bruijn assembly tests with real data
+// ===========================================================================
+
+#[test]
+fn test_debruijn_assembly_produces_output() {
+    let (reads, ref_seq, region) = load_event();
+    let method = DeBruijnAssembly::default();
+    let result = method.assemble(&reads, &ref_seq, region.start).unwrap();
+
+    assert_eq!(
+        result.sequence.len(),
+        ref_seq.len(),
+        "De Bruijn assembly length should match reference length"
+    );
+    assert_eq!(result.depth.len(), ref_seq.len());
+    assert_eq!(result.confidence.len(), ref_seq.len());
+    assert_eq!(result.method_name, "debruijn");
+}
+
+#[test]
+fn test_debruijn_assembly_has_depth() {
+    let (reads, ref_seq, region) = load_event();
+    let method = DeBruijnAssembly::default();
+    let result = method.assemble(&reads, &ref_seq, region.start).unwrap();
+
+    let covered = result.depth.iter().filter(|&&d| d > 0).count();
+    assert!(
+        covered > 0,
+        "De Bruijn assembly should have some positions with depth"
+    );
+}
+
+#[test]
+fn test_debruijn_in_engine_evaluation() {
+    let (reads, ref_seq, region) = load_event();
+    let region = event_region();
+
+    let mut engine = AssemblyEngine::new();
+    engine.add_method(Box::new(ConsensusAssembly));
+    engine.add_method(Box::new(DeBruijnAssembly::default()));
+
+    let results = engine.evaluate_all(&reads, &ref_seq, &region).unwrap();
+    assert_eq!(results.len(), 2);
+
+    for result in &results {
+        assert!(result.fitness.overall >= 0.0);
+        assert!(result.fitness.overall <= 1.0);
+    }
+}
+
+// ===========================================================================
+// 12. Assembly-based SV detection tests
+// ===========================================================================
+
+#[test]
+fn test_assembly_sv_detection_from_consensus() {
+    let (reads, ref_seq, region) = load_event();
+    let method = ConsensusAssembly;
+    let assembly = method.assemble(&reads, &ref_seq, region.start).unwrap();
+
+    let caller = AssemblySVCaller::new();
+    let events = caller.detect_from_assembly(&assembly, &ref_seq, region.start, &reads);
+
+    // Events should have valid fields
+    for ev in &events {
+        assert!(ev.start >= region.start);
+        assert!(ev.end >= ev.start);
+        assert!((0.0..=1.0).contains(&ev.confidence));
+        assert!(ev.size != 0);
+    }
+}
+
+#[test]
+fn test_assembly_sv_detection_from_haplotype() {
+    let (reads, ref_seq, region) = load_event();
+
+    let mut engine = AssemblyEngine::new();
+    engine.add_method(Box::new(ConsensusAssembly));
+
+    let hap_result = engine.assemble_by_haplotype(&reads, &ref_seq, region.start).unwrap();
+
+    let caller = AssemblySVCaller::new();
+    let events = caller.detect_from_haplotype_assembly(&hap_result, region.start, &reads);
+
+    for ev in &events {
+        assert!(ev.start >= region.start);
+        assert!(ev.end >= ev.start);
+        assert!((0.0..=1.0).contains(&ev.confidence));
+    }
 }
 
 #[test]

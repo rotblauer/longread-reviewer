@@ -19,7 +19,8 @@ use egui_plot::{Bar, BarChart, Legend, Plot};
 
 use longread_reviewer::alignment::{AlignedRead, AlignmentReader, CigarOp};
 use longread_reviewer::assembly::engine::AssemblyEngine;
-use longread_reviewer::assembly::method::{AssemblyResult, ConsensusAssembly, HaplotypeAssemblyResult, WindowConsensusAssembly};
+use longread_reviewer::assembly::method::{AssemblyResult, ConsensusAssembly, DeBruijnAssembly, HaplotypeAssemblyResult, WindowConsensusAssembly};
+use longread_reviewer::assembly::sv_detect::{AssemblySVCaller, AssemblySVEvent, AssemblySVType};
 use longread_reviewer::haplotype::{HaplotypeAssigner, HaplotypeLabel};
 use longread_reviewer::metrics::{FitnessScore, MetricsCalculator};
 use longread_reviewer::reference::ReferenceGenome;
@@ -159,6 +160,9 @@ struct SVReviewerApp {
     // Computed values (cached)
     depth_by_position: Vec<u32>,
     max_depth: u32,
+
+    // Assembly-based SV detection
+    assembly_sv_events: Vec<AssemblySVEvent>,
 }
 
 impl SVReviewerApp {
@@ -168,6 +172,7 @@ impl SVReviewerApp {
         engine.add_method(Box::new(WindowConsensusAssembly::new(100, 20)));
         engine.add_method(Box::new(WindowConsensusAssembly::new(50, 10)));
         engine.add_method(Box::new(WindowConsensusAssembly::new(200, 40)));
+        engine.add_method(Box::new(DeBruijnAssembly::default()));
 
         let view_center = (region.start + region.end) as f64 / 2.0;
 
@@ -199,12 +204,14 @@ impl SVReviewerApp {
             show_haplotype_assemblies: true,
             depth_by_position: Vec::new(),
             max_depth: 1,
+            assembly_sv_events: Vec::new(),
         };
 
         app.detect_svs();
         app.assign_haplotypes();
         app.run_all_assemblies(&reference, region.start);
         app.run_haplotype_assembly(&reference, region.start);
+        app.detect_assembly_svs(&reference, region.start);
         app.compute_depth_track();
 
         // Jump to first SV if any
@@ -350,6 +357,26 @@ impl SVReviewerApp {
 
         self.max_depth = *depth.iter().max().unwrap_or(&1);
         self.depth_by_position = depth;
+    }
+
+    fn detect_assembly_svs(&mut self, reference: &[u8], ref_start: u64) {
+        let caller = AssemblySVCaller::new();
+        let mut all_events: Vec<AssemblySVEvent> = Vec::new();
+
+        // Detect from assembly vs reference
+        if let Some(asm) = self.assemblies.first() {
+            let events = caller.detect_from_assembly(&asm.result, reference, ref_start, &self.reads);
+            all_events.extend(events);
+        }
+
+        // Detect from haplotype divergence
+        if let Some(ref hap_asm) = self.haplotype_assembly {
+            let events = caller.detect_from_haplotype_assembly(hap_asm, ref_start, &self.reads);
+            all_events.extend(events);
+        }
+
+        all_events.sort_by_key(|e| e.start);
+        self.assembly_sv_events = all_events;
     }
 
     fn center_on_sv(&mut self, idx: usize) {
@@ -561,6 +588,32 @@ impl SVReviewerApp {
             ui.colored_label(COLOR_INSERTION, format!("{} INS (+{}bp)", ins_count, total_ins));
         });
 
+        // Assembly-based SV detection summary
+        if !self.assembly_sv_events.is_empty() {
+            ui.separator();
+            ui.label(RichText::new("Assembly-Based Detection").strong().size(12.0));
+            let asm_del = self.assembly_sv_events.iter().filter(|e| e.sv_type == AssemblySVType::Deletion).count();
+            let asm_ins = self.assembly_sv_events.iter().filter(|e| e.sv_type == AssemblySVType::Insertion).count();
+            ui.horizontal(|ui| {
+                ui.colored_label(Color32::from_rgb(255, 120, 120), format!("{} DEL", asm_del));
+                ui.colored_label(Color32::from_rgb(120, 255, 120), format!("{} INS", asm_ins));
+            });
+            for ev in &self.assembly_sv_events {
+                ui.horizontal(|ui| {
+                    let sym = if ev.sv_type == AssemblySVType::Deletion { "▼" } else { "▲" };
+                    let color = if ev.sv_type == AssemblySVType::Deletion { COLOR_DELETION } else { COLOR_INSERTION };
+                    ui.colored_label(color, sym);
+                    ui.label(RichText::new(format!("{}bp @{}", ev.size.abs(), ev.start)).small());
+                    ui.label(RichText::new(format!("{:.0}%", ev.confidence * 100.0)).small().color(
+                        if ev.confidence > 0.5 { Color32::from_rgb(100, 255, 100) }
+                        else if ev.confidence > 0.2 { Color32::from_rgb(255, 255, 100) }
+                        else { Color32::from_rgb(255, 100, 100) }
+                    ));
+                    ui.label(RichText::new(format!("[{}]", ev.source)).small().color(Color32::GRAY));
+                });
+            }
+        }
+
         ui.separator();
 
         // SV list - collect click actions to process after iteration
@@ -765,6 +818,29 @@ impl SVReviewerApp {
                         ui.label(format!("Position: chr17:{}-{}", sv.start, sv.end));
                         ui.label(format!("Supporting reads: {}", sv.supporting_reads.len()));
                         ui.label(format!("Confidence: {:.1}%", sv.confidence * 100.0));
+
+                        // Show assembly-based corroboration
+                        let asm_match = self.assembly_sv_events.iter().find(|e| {
+                            (e.start as i64 - sv.start as i64).unsigned_abs() < 100
+                                && e.size.abs().abs_diff(sv.size.abs()) < 100
+                        });
+                        if let Some(asm_ev) = asm_match {
+                            ui.separator();
+                            ui.colored_label(
+                                Color32::from_rgb(100, 255, 150),
+                                RichText::new("✓ Assembly-confirmed").strong(),
+                            );
+                            ui.label(RichText::new(format!(
+                                "Source: {} | Asm conf: {:.0}%",
+                                asm_ev.source, asm_ev.confidence * 100.0
+                            )).small());
+                        } else {
+                            ui.separator();
+                            ui.colored_label(
+                                Color32::from_rgb(255, 200, 100),
+                                RichText::new("⚠ CIGAR-only (no assembly confirmation)").small(),
+                            );
+                        }
 
                         ui.separator();
                         ui.label("Supporting reads:");
