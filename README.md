@@ -2,6 +2,8 @@
 
 A terminal-based and GUI long-read alignment viewer with **structural variant detection**, **dynamic local assembly** (independent of the original aligner), haplotype-aware read visualization, and per-base fitness evaluation metrics.
 
+> **AI-generated content**: Portions of this repository (including code and documentation) were produced with AI assistance. Review and validate all outputs independently before using in research, clinical, or production contexts.
+
 ## Features
 
 - **Structural Variant Detection**: Detects large insertions and deletions from both CIGAR strings *and* assembly-vs-reference comparison for independent confirmation
